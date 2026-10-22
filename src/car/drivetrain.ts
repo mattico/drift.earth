@@ -18,6 +18,10 @@ export interface DriveOutput {
 }
 
 const RPM_PER_RAD_S = 60 / (2 * Math.PI);
+/** Seconds for the auto box's held throttle demand to ease from full to none on part throttle. */
+const DEMAND_DECAY = 2;
+/** Below this throttle the pedal counts as lifted, and the auto box holds its gear. */
+const LIFTED = 0.05;
 const HP_PER_KW = 1.341;
 
 /** Engine torque (N·m) at `rpm`, from the car's curve. */
@@ -61,6 +65,12 @@ export class Drivetrain {
   boost = 0;
   private shiftTimer = 0;
   private autoHold = 0;
+  /**
+   * Throttle the auto box picks its upshift point from: the recent peak, easing
+   * down on part throttle and held when lifted, so lifting off (a key or touch
+   * button goes straight to 0) doesn't drop the upshift point and shift up.
+   */
+  private demand = 0;
   private engineRpm: number;
   private cutTimer = 0;
 
@@ -109,7 +119,7 @@ export class Drivetrain {
     const D = this.spec;
     this.gear = 1;
     this.rpm = this.engineRpm = D.idleRpm;
-    this.shiftTimer = this.autoHold = this.cutTimer = 0;
+    this.shiftTimer = this.autoHold = this.cutTimer = this.demand = 0;
     this.limiting = false;
     this.boost = 0;
   }
@@ -132,6 +142,8 @@ export class Drivetrain {
   ): DriveOutput {
     const D = this.spec;
     this.autoHold = Math.max(0, this.autoHold - dt);
+    if (throttle >= this.demand) this.demand = throttle;
+    else if (throttle > LIFTED) this.demand = Math.max(throttle, this.demand - dt / DEMAND_DECAY);
     if (reverse) this.gear = -1;
     else if (this.gear < 0) this.gear = 1;
 
@@ -223,14 +235,15 @@ export class Drivetrain {
 
   /**
    * Shifts up on engine (wheel) speed, down on road speed, so locked rear
-   * wheels don't drop a gear. Sliding, it shifts up only on road speed and as
+   * wheels don't drop a gear. The upshift point follows the held demand, the
+   * downshift point the throttle right now, so lifting off shifts neither way. Sliding, it shifts up only on road speed and as
    * if at full throttle, so wheelspin and feathering don't shift it, and only
    * shifts down if the road speed collapses.
    */
   private autoShift(wheelSpeed: number, roadSpeed: number, throttle: number, drifting: boolean): void {
     const D = this.spec;
     const upSpeed = drifting ? roadSpeed : Math.max(wheelSpeed, roadSpeed);
-    const up = MathUtils.lerp(D.autoUpRpm[0], D.autoUpRpm[1], drifting ? 1 : throttle);
+    const up = MathUtils.lerp(D.autoUpRpm[0], D.autoUpRpm[1], drifting ? 1 : this.demand);
     const down = drifting ? D.autoDownRpm[0] : MathUtils.lerp(D.autoDownRpm[0], D.autoDownRpm[1], throttle);
     // Never shift up into a gear the road speed would shift straight back out
     // of (wheelspin at low speed holds 1st and bounces off the limiter).
