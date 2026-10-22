@@ -12,6 +12,8 @@ export interface Actions {
   /** Toggle the free camera easing back behind the car once the stick is let go. */
   cameraRecenter: boolean;
   mute: boolean;
+  /** The big map is shown while this is held. */
+  map: boolean;
   debug: boolean;
   /** Drop a marker into the debug trace. */
   mark: boolean;
@@ -32,7 +34,7 @@ export interface Actions {
   back: boolean;
 }
 
-const DRIVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
+const DRIVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab']);
 // Browser defaults for these (find bar, caret browsing…) get in the way of the debug keys.
 const DEBUG_KEYS = new Set(['F3', 'F8', 'F9']);
 
@@ -93,7 +95,7 @@ export class InputManager {
     window.addEventListener('keydown', (e) => {
       if (isTyping(e)) return;
       this.device = 'keyboard';
-      // Leave Space/arrows alone in the menu so buttons and scrolling still work.
+      // Leave Space/arrows/Tab alone in the menu so buttons, scrolling and focus still work.
       if (DRIVE_KEYS.has(e.code) && !inMenu()) e.preventDefault();
       if (DEBUG_KEYS.has(e.code)) e.preventDefault();
       if (!e.repeat) this.pressed.add(e.code);
@@ -234,6 +236,7 @@ export class InputManager {
       cameraWrap: true,
       cameraRecenter: false,
       mute: p('KeyM'),
+      map: k('Tab'),
       debug: p('F3', 'Backquote'),
       mark: p('F8'),
       saveTrace: p('F9'),

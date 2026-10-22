@@ -477,6 +477,7 @@ export class Game {
         this.updateDriving(dt, inp);
       }
     }
+    this.minimap.setExpanded(this.phase === 'driving' && actions.map);
     // After the phase handling, so a press that resumes from the menu can't
     // also act in the game this frame (B is back in the menu, shift up driving).
     const menuOpen = this.phase === 'idle' || this.phase === 'paused';
@@ -682,7 +683,7 @@ export class Game {
     const renderPos = new Vector3(x, y, z);
     this.chase.follow(dt, renderPos, heading, P.vel, P.drifting);
     const geo = this.world!.geo(renderPos);
-    // Heading-up: the view's bearing (clockwise from north) points up the map.
+    // Heading-up: the view's bearing (clockwise from north) points up the map (the big map is north-up).
     if (geo) this.minimap.update(dt, geo.lat, geo.lon, -this.chase.viewYaw, -heading, P.speed);
     const box = P.drivetrain;
     this.audio.update(
