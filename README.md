@@ -83,7 +83,7 @@ Once sliding:
 - **Past about 55°** a stability assist pushes the car back toward the slide, so even full lock and full throttle peak around 75° instead of spinning.
 
 **Sound** is synthesized as you drive:
-- **Engine:** an inline six fired cylinder by cylinder in an AudioWorklet. Each firing is a combustion pulse sized by throttle, with slight differences between cylinders and from cycle to cycle, so it idles lumpily and wails smoothly at the top. The pulses go through exhaust resonances and soft saturation, with intake roar under load. The limiter stutters, a hard upshift pops, and lifting off from high revs crackles on the overrun.
+- **Engine:** a cross-plane V8 with true dual exhausts, fired cylinder by cylinder in an AudioWorklet. Each bank fires at uneven intervals (270°, 180°, 90°, 180°) into its own pipe, which gives the V8 burble and keeps a low body even at 8,000 rpm. Each firing is a combustion pulse sized by throttle, with slight differences between cylinders and from cycle to cycle. Each pipe has its own resonance (a tuned delay loop, at slightly different lengths), a muffle that opens with load and light saturation, with intake roar under load. The limiter stutters, a hard upshift pops, and lifting off from high revs crackles on the overrun.
 - **Transmission:** gear whine at the gear-mesh frequency, which changes with each gear (reverse whines loudest), differential whine with road speed, and a clunk on each shift.
 - **Tyres and road:** front and rear squeal, pitched by how fast each axle slides (a standing burnout squeals too), a rasp from wheelspin, rolling noise and wind with speed, and a thud on landing.
 

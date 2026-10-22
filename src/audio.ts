@@ -1,12 +1,14 @@
 /**
  * Synthesized car audio. Starts on the first user gesture.
  *
- * - Engine: an inline six, fired cylinder by cylinder in an AudioWorklet. Each
- *   firing is a combustion pulse sized by throttle, with per-cylinder
- *   imbalance and cycle-to-cycle jitter (a lumpy idle, a smooth wail at high
- *   revs). The pulses run through exhaust resonances and soft saturation; an
- *   intake roar comes in under load. Overrun after a high-rpm lift crackles,
- *   the limiter's fuel cut stutters, and a hard upshift pops.
+ * - Engine: a cross-plane V8 with true dual exhausts, fired cylinder by
+ *   cylinder in an AudioWorklet. Each bank fires at uneven intervals into its
+ *   own pipe, which is where a V8's burble and low body come from even at
+ *   high revs. Each firing is a combustion pulse sized by throttle, with
+ *   per-cylinder imbalance and cycle-to-cycle jitter. Each pipe resonates
+ *   (a tuned delay loop), is muffled by load and lightly saturated; an intake
+ *   roar comes in under load. Overrun after a high-rpm lift crackles, the
+ *   limiter's fuel cut stutters, and a hard upshift pops.
  * - Transmission: gear whine at the gear-mesh frequency (so it changes with
  *   each gear; reverse's straight-cut gears whine loudest), differential whine
  *   with road speed, and a clunk on every shift.
@@ -57,7 +59,10 @@ class Engine extends AudioWorkletProcessor {
   }
   constructor() {
     super();
-    this.cyl = 6;
+    // Cross-plane V8, firing order 1-8-4-3-6-5-7-2: the bank each firing goes
+    // out of. Each bank fires 270, 180, 90, 180 degrees apart.
+    this.banks = [0, 1, 1, 0, 1, 0, 0, 1];
+    this.cyl = 8;
     this.firings = 0;
     this.count = 0;
     this.rpm = 900;
@@ -81,8 +86,9 @@ class Engine extends AudioWorkletProcessor {
   }
   fire(load, cut, pops) {
     const c = this.count++ % this.cyl;
-    // Blowdown lasts about 70 degrees of crank: shorter in time as the revs rise.
-    const tau = Math.max(0.0006, (60 / Math.max(this.rpm, 300)) * (70 / 360) / 3);
+    const bank = this.banks[c];
+    // Blowdown, smeared by the header, lasts about 110 degrees of crank.
+    const tau = Math.max(0.0009, (60 / Math.max(this.rpm, 300)) * (110 / 360) / 3);
     // Bangs and pops go off in the exhaust, not the cylinder: their own output.
     if (this.bangs > 0) {
       this.bangs--;
@@ -90,28 +96,29 @@ class Engine extends AudioWorkletProcessor {
     }
     if (cut) {
       // No fuel: only the pumping of the cylinders.
-      this.pulses.push({ t: 0, tau, amp: 0.18, noise: 0.06 });
+      this.pulses.push({ t: 0, tau, amp: 0.18, noise: 0.05, bank });
       return;
     }
     // Overrun: now and then an unburnt charge going off in the hot exhaust.
-    if (load < 0.08 && pops > 0 && this.rand() < pops * 0.045) {
+    if (load < 0.08 && pops > 0 && this.rand() < pops * 0.035) {
       this.pulses.push({ t: 0, tau: Math.max(tau * 2.5, 0.0015), amp: 0.5 + this.rand() * 0.8, noise: 1.2, pop: true });
     }
     // Idle and light load burn unevenly; full load is steady.
     const lumpy = 0.05 + 0.3 * (1 - load) * Math.max(0, 1 - (this.rpm - 800) / 2500);
     const amp = (0.3 + 0.7 * load) * this.trim[c] * (1 + (this.rand() - 0.5) * 2 * lumpy);
-    this.pulses.push({ t: 0, tau, amp, noise: 0.15 + 0.45 * load });
+    this.pulses.push({ t: 0, tau, amp, noise: 0.1 + 0.3 * load, bank });
   }
   process(inputs, outputs, params) {
-    const ex = outputs[0][0];
-    const intake = outputs[1][0];
-    const popOut = outputs[2][0];
+    const exA = outputs[0][0];
+    const exB = outputs[1][0];
+    const intake = outputs[2][0];
+    const popOut = outputs[3][0];
     const target = params.rpm[0];
     const load = params.load[0];
     const cut = params.cut[0] > 0.5;
     const pops = params.pops[0];
     const dt = 1 / sampleRate;
-    for (let i = 0; i < ex.length; i++) {
+    for (let i = 0; i < exA.length; i++) {
       // Glide so the firing rate never steps.
       this.rpm += (target - this.rpm) * 0.002;
       this.firings += ((this.rpm / 60) * (this.cyl / 2)) / sampleRate;
@@ -119,7 +126,8 @@ class Engine extends AudioWorkletProcessor {
         this.firings -= 1;
         this.fire(load, cut, pops);
       }
-      let e = 0;
+      let a = 0;
+      let b = 0;
       let env = 0;
       let pop = 0;
       for (let k = this.pulses.length - 1; k >= 0; k--) {
@@ -129,13 +137,15 @@ class Engine extends AudioWorkletProcessor {
         const v = p.amp * g + p.noise * g * (this.rand() - 0.5);
         if (p.pop) pop += v;
         else {
-          e += v;
+          if (p.bank) b += v;
+          else a += v;
           env += p.amp * g;
         }
         p.t += dt;
         if (x > 8) this.pulses.splice(k, 1);
       }
-      ex[i] = e;
+      exA[i] = a;
+      exB[i] = b;
       intake[i] = env * (this.rand() * 2 - 1);
       popOut[i] = pop;
     }
@@ -158,8 +168,9 @@ export class CarAudio {
   // Engine
   private engine: AudioWorkletNode | null = null;
   private fallback: OscillatorNode[] = [];
-  private exhaustIn!: GainNode;
-  private exhaustLow!: BiquadFilterNode;
+  /** Per exhaust bank: its input and its load-dependent muffle. */
+  private readonly bankIn: GainNode[] = [];
+  private readonly exhaustLow: BiquadFilterNode[] = [];
   private exhaustGain!: GainNode;
   private intakeFilter!: BiquadFilterNode;
   private intakeGain!: GainNode;
@@ -227,23 +238,43 @@ export class CarAudio {
       return g;
     };
 
-    // Exhaust: DC out, the pipe's resonances, a load-dependent muffle, then
-    // soft saturation for the rasp.
-    this.exhaustIn = gainNode(1);
-    this.exhaustLow = filter('lowpass', 1500, 0.8);
-    const shaper = ctx.createWaveShaper();
-    shaper.curve = saturation(2.2);
-    shaper.oversample = '2x';
+    // Exhaust, one pipe per bank: DC out, the pipe's resonance (a delay loop:
+    // a boom at its fundamental, weaker overtones), the body, a muffle that
+    // opens with load, light saturation, and a little stereo spread. Slightly
+    // different pipe lengths keep the banks from sounding identical.
     this.exhaustGain = gainNode(0);
-    this.exhaustIn
-      .connect(filter('highpass', 28))
-      .connect(filter('peaking', 140, 1, 6))
-      .connect(filter('peaking', 430, 1.4, 4))
-      .connect(this.exhaustLow)
-      .connect(shaper)
-      .connect(this.exhaustGain)
-      .connect(bus);
-    this.intakeFilter = filter('bandpass', 1500, 1.1);
+    this.exhaustGain.connect(bus);
+    const pipe = (delay: number) => {
+      const sum = gainNode(1);
+      const d = ctx.createDelay(0.05);
+      d.delayTime.value = delay;
+      sum.connect(d).connect(filter('lowpass', 650, 0.5)).connect(gainNode(0.55)).connect(sum);
+      return sum;
+    };
+    for (const [delay, pan] of [
+      [0.0118, -0.3],
+      [0.0134, 0.3],
+    ]) {
+      const input = gainNode(1);
+      const low = filter('lowpass', 800, 0.9);
+      const shaper = ctx.createWaveShaper();
+      shaper.curve = saturation(1.3);
+      shaper.oversample = '2x';
+      const panner = ctx.createStereoPanner();
+      panner.pan.value = pan;
+      input
+        .connect(filter('highpass', 25))
+        .connect(pipe(delay))
+        .connect(filter('peaking', 95, 0.8, 6))
+        .connect(filter('peaking', 260, 1, 3))
+        .connect(low)
+        .connect(shaper)
+        .connect(panner)
+        .connect(this.exhaustGain);
+      this.bankIn.push(input);
+      this.exhaustLow.push(low);
+    }
+    this.intakeFilter = filter('bandpass', 700, 0.9);
     this.intakeGain = gainNode(0);
     this.intakeFilter.connect(this.intakeGain).connect(bus);
     // Exhaust pops: sharp, bright, unmuffled.
@@ -303,7 +334,8 @@ export class CarAudio {
         osc.type = type;
         const g = ctx.createGain();
         g.gain.value = mix;
-        osc.connect(g).connect(this.exhaustIn);
+        osc.connect(g);
+        for (const input of this.bankIn) g.connect(input);
         osc.start();
         this.fallback.push(osc);
       }
@@ -316,10 +348,11 @@ export class CarAudio {
     ctx.audioWorklet
       .addModule(url)
       .then(() => {
-        const node = new AudioWorkletNode(ctx, 'drift-engine', { numberOfInputs: 0, numberOfOutputs: 3, outputChannelCount: [1, 1, 1] });
-        node.connect(this.exhaustIn, 0);
-        node.connect(this.intakeFilter, 1);
-        node.connect(this.popIn, 2);
+        const node = new AudioWorkletNode(ctx, 'drift-engine', { numberOfInputs: 0, numberOfOutputs: 4, outputChannelCount: [1, 1, 1, 1] });
+        node.connect(this.bankIn[0], 0);
+        node.connect(this.bankIn[1], 1);
+        node.connect(this.intakeFilter, 2);
+        node.connect(this.popIn, 3);
         this.engine = node;
       })
       .catch(fallback)
@@ -376,13 +409,15 @@ export class CarAudio {
       p.get('cut')!.setValueAtTime(cut ? 1 : 0, t);
       p.get('pops')!.setValueAtTime(pops, t);
     }
-    for (const [i, osc] of this.fallback.entries()) set(osc.frequency, ((s.rpm / 60) * 3) / (i + 1), 0.03);
+    for (const [i, osc] of this.fallback.entries()) set(osc.frequency, ((s.rpm / 60) * 4) / (i + 1), 0.03);
     // Pulses carry more energy the faster they come: level it off a little with rpm.
-    const level = (0.5 + 0.5 * load) * Math.pow(Math.max(frac, 0.1), -0.3) * 0.32;
+    const level = (0.5 + 0.5 * load) * Math.pow(Math.max(frac, 0.1), -0.3) * 0.5;
     set(this.exhaustGain.gain, cut && !this.engine ? level * 0.3 : level, cut ? 0.01 : 0.05);
-    set(this.exhaustLow.frequency, 700 + 3800 * load * (0.4 + 0.6 * frac) + 900 * frac, 0.05);
-    set(this.intakeFilter.frequency, 900 + 1800 * frac, 0.05);
-    set(this.intakeGain.gain, 0.5 * load * frac * frac, 0.06);
+    // Muffled off-throttle and low down; it opens up with load and revs, but a
+    // car exhaust stays dark (a bike's is open and bright).
+    for (const low of this.exhaustLow) set(low.frequency, 320 + 1700 * load * (0.35 + 0.65 * frac) + 500 * frac, 0.05);
+    set(this.intakeFilter.frequency, 500 + 1000 * frac, 0.05);
+    set(this.intakeGain.gain, 0.3 * load * frac * frac, 0.06);
 
     // Transmission: only while the clutch carries the drive.
     const teeth = GEAR_TEETH[s.gear] ?? 20;
