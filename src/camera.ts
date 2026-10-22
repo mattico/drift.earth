@@ -54,6 +54,16 @@ export class ChaseCamera {
     }
   }
 
+  /**
+   * Free camera from a mouse drag: orbits and tilts by the drag (fractions of
+   * the screen height), moving the same way as the stick. Held still, it stays.
+   */
+  drag(x: number, y: number): void {
+    this.orbitIdle = 0;
+    this.orbitYaw = wrapAngle(this.orbitYaw - x * C.dragRate);
+    this.orbitPitch += y * C.dragRate;
+  }
+
   /** The direction the camera faces (yaw about +Y, like a heading), free camera included. */
   get viewYaw(): number {
     return this.yaw + this.orbitYaw;

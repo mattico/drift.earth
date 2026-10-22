@@ -64,7 +64,7 @@ Link previews (Open Graph and Twitter cards in `index.html`) show `public/og.jpg
 | Automatic / manual | T, or click AUTO/MANUAL | View |
 | Reset to a recent spot | R | Y |
 | Camera tilt preset | C (wraps round) | D-pad ← / → (stops at either end) |
-| Look around (eases back when let go) | | Right stick |
+| Look around (eases back when let go) | Drag with the mouse | Right stick |
 | Ease back on or off | | R3 |
 | Zoom | Mouse wheel, + / − | D-pad ↑ / ↓ |
 | Menu / pause | Esc | Menu |

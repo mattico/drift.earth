@@ -166,7 +166,7 @@ export class Game {
       // Storage blocked: the default (re-centre).
     }
 
-    this.input = new InputManager(document.getElementById('touch')!);
+    this.input = new InputManager(document.getElementById('touch')!, canvas);
     this.input.onPadConnected = (_name, supported) =>
       this.hud.toast(supported ? 'Controller connected' : 'Controller not supported in this browser', supported ? 'good' : 'bad');
     this.hud.bindGearbox((kind) => (this.input.shiftQueue[kind] = true));
@@ -390,6 +390,7 @@ export class Game {
         if (actions.cameraCycle) this.chase.cyclePitch(actions.cameraCycle, actions.cameraWrap);
         if (actions.cameraRecenter) this.setRecenter(!this.chase.recenter);
         this.chase.look(actions.look.x, actions.look.y, dt);
+        if (actions.drag) this.chase.drag(actions.drag.x, actions.drag.y);
         const box = this.physics.drivetrain;
         if (actions.shiftUp) box.shiftUp();
         if (actions.shiftDown) box.shiftDown();

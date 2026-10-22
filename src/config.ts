@@ -129,6 +129,8 @@ export const CAMERA = {
   orbitMinPitch: 8 * (Math.PI / 180),
   orbitHold: 1.5,
   orbitReturnTau: 0.5,
+  /** Mouse drag: orbit and tilt (rad) per screen height dragged. */
+  dragRate: 2 * Math.PI,
   targetTau: 0.08,
   distanceTau: 0.6,
   lookAheadTime: 0.35,

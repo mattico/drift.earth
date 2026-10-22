@@ -24,6 +24,8 @@ export interface Actions {
   zoom: number;
   /** Free camera from the right stick: orbit rate around the car (x) and tilt (y), −1…1. */
   look: { x: number; y: number };
+  /** Free camera from a mouse drag on the view: movement this frame as fractions of its height, or null if not dragging. */
+  drag: { x: number; y: number } | null;
   /** Menu navigation from a gamepad: a focus move (with auto-repeat), select and back. */
   nav: { x: number; y: number } | null;
   select: boolean;
@@ -68,6 +70,7 @@ export class InputManager {
   private readonly keys = new Set<string>();
   private readonly pressed = new Set<string>();
   private wheel = 0;
+  private readonly mouseDrag = { id: null as number | null, x: 0, y: 0 };
   private readonly touch = { steer: 0, throttle: 0, brake: 0, handbrake: false, pause: false, reset: false };
   /** Last frame's buttons per pad index, for edge detection. */
   private readonly padPrev = new Map<number, boolean[]>();
@@ -83,7 +86,10 @@ export class InputManager {
   /** A controller was connected (`supported` false if the browser gives it no standard mapping). */
   onPadConnected: ((name: string, supported: boolean) => void) | null = null;
 
-  constructor(private readonly touchRoot: HTMLElement) {
+  constructor(
+    private readonly touchRoot: HTMLElement,
+    private readonly view: HTMLElement,
+  ) {
     window.addEventListener('keydown', (e) => {
       if (isTyping(e)) return;
       this.device = 'keyboard';
@@ -115,6 +121,31 @@ export class InputManager {
     });
     window.addEventListener('gamepaddisconnected', (e) => this.padPrev.delete(e.gamepad.index));
     this.setupTouch();
+    this.setupDrag();
+  }
+
+  private setupDrag(): void {
+    const view = this.view;
+    const drag = this.mouseDrag;
+    view.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'mouse' || e.button !== 0) return;
+      drag.id = e.pointerId;
+      view.setPointerCapture(e.pointerId);
+      view.style.cursor = 'grabbing';
+    });
+    view.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== drag.id) return;
+      drag.x += e.movementX / view.clientHeight;
+      drag.y += e.movementY / view.clientHeight;
+    });
+    const release = (e: PointerEvent) => {
+      if (e.pointerId !== drag.id) return;
+      drag.id = null;
+      view.style.cursor = '';
+    };
+    view.addEventListener('pointerup', release);
+    view.addEventListener('pointercancel', release);
+    view.addEventListener('lostpointercapture', release);
   }
 
   private setupTouch(): void {
@@ -211,6 +242,7 @@ export class InputManager {
       gearMode: p('KeyT'),
       zoom: 1,
       look: { x: 0, y: 0 },
+      drag: this.mouseDrag.id === null ? null : { x: this.mouseDrag.x, y: this.mouseDrag.y },
       nav: null,
       select: false,
       back: false,
@@ -221,6 +253,7 @@ export class InputManager {
       actions.zoom *= Math.exp(this.wheel * 0.001);
       this.wheel = 0;
     }
+    this.mouseDrag.x = this.mouseDrag.y = 0;
 
     // Touch
     if (this.touch.pause) actions.pause = true;
