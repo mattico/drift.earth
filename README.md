@@ -127,9 +127,16 @@ Once sliding:
   - **Muscle car:** a cross-plane V8 with true dual exhausts. Each bank fires at uneven intervals (270°, 180°, 90°, 180°) into its own pipe, which gives the burble and keeps a low body even at 7,000 rpm. Intake roar comes in under load.
   - **Hot hatch:** a turbo four firing evenly every 180° into a single exhaust, with a gruff induction growl under load. A turbo whistle rises with boost, the blow-off valve sighs when you lift at boost, and it pops more eagerly on the overrun.
 - **Transmission:** gear whine at the gear-mesh frequency, which changes with each gear (reverse whines loudest), differential whine with road speed, and a clunk on each shift.
-- **Tires and road:** front and rear squeal, pitched by how fast each axle slides (a standing burnout squeals too), a rasp from wheelspin, rolling noise and wind with speed, and a thud on landing.
+- **Tires and road:** front and rear squeal, pitched by how fast each axle slides (a standing burnout squeals too), a rasp from wheelspin, rolling noise with speed, and a thud on landing.
+- **Wind:** a rush on each side that rises in pitch and swells with speed (about as speed²), with a low buffeting under it. Each side gusts on its own, faster the faster you go; the buffeting under it, below about 300 Hz with its boom around 110 Hz lifted, also flutters several times a second. Sliding sideways, the air meets the body at an angle: the rush grows, the buffeting grows more, and the side the air comes from is louder.
 
 Browsers only start audio after a key press or click; a gamepad button doesn't count.
+
+**Speed effects** grow as the car nears its top speed (the Top speed (camera) field in Tuning), so both cars feel fast near theirs. The numbers are `SPEED_FX` in `src/config.ts`; the menu's **Speed effects** button turns them all off (it's remembered).
+- **Vignette:** the corners darken, up to half, from a fifth of top speed.
+- **Motion blur:** the world smears along its own motion on screen, as if the shutter stayed open 1/30 s, never more than 3% of the screen height. It's lighter where you look: in the middle of the screen and ahead toward where the car is heading, only 15% of it is left, growing back to full toward the sides and the bottom. It's camera motion blur: each pixel's world point (from depth) is projected with the last frame's camera, so rotation in a drift blurs too. The car, its ghost, smoke, skid marks and the debug layers stay sharp. With blur on, the world draws into a 4× multisampled target, the blur pass puts it on screen with its depth, and the sharp things draw over it depth-tested as before. Below the blur's threshold it's one plain render.
+- **Speed lines:** thin dashes rushing out along rays from where the car is heading (its vanishing point, above the top of the screen at the default tilt), only along the sides and in the corners. More of them light up the faster you go; reversing, they rush in.
+- **Streaks off the car:** thin white lines peel off its flanks and the corners of its tail. Each follows its point on the car for a moment, drawing a line back along the way the car came (so in a slide they follow the slide), then hangs in the air, drifting outward and fading as the car pulls away. They're drawn a couple of pixels wide however far the camera pulls back.
 
 **Scoring:** drifting earns points for speed × slip angle. The multiplier rises every 2 s you hold a drift. A drift chain banks 1.2 s after it ends. Hitting a wall hard during the chain loses it.
 
@@ -187,6 +194,7 @@ src/
   audio.ts           synthesized engine (AudioWorklet), transmission, tires, road and wind
   game.ts            phases (locating → driving ⇄ paused), fly-in spawn, fixed-step loop, rebasing
   camera.ts          top-down chase camera
+  speedFx.ts         vignette, camera motion blur and speed lines
   input.ts           keyboard, gamepad (with menu navigation) and touch
   minimap.ts         heading-up 2D roadmap in the corner
   config.ts          world, ground, camera and scoring numbers
@@ -198,6 +206,7 @@ src/
   car/carModel.ts    procedural low-poly cars (the muscle car's body), see-through ghost, blob shadow
   car/hatchBody.ts   the hot hatch's body and wheels
   car/effects.ts     skid-mark ribbons and tire smoke
+  car/streaks.ts     speed streaks peeling off the car
   world/tilesWorld.ts    Google 3D Tiles via 3d-tiles-renderer
   world/practiceWorld.ts offline test track
   world/collider.ts      BVH raycasts (three-mesh-bvh) against nearby tile meshes

@@ -13,12 +13,14 @@ import { ChaseCamera, wrapAngle } from './camera';
 import { CarModel } from './car/carModel';
 import { CARS, DEFAULT_CAR, type CarId, type CarSpec } from './car/cars';
 import { TireEffects, type WheelSample } from './car/effects';
+import { SpeedStreaks } from './car/streaks';
 import { CarPhysics, type CarInput } from './car/physics';
 import { CAMERA, PHYSICS, SCORING } from './config';
 import { DebugTools } from './debug/tools';
 import { InputManager, type Actions, type InputDevice } from './input';
 import { Minimap } from './minimap';
 import { DriftScore } from './scoring';
+import { SpeedFx } from './speedFx';
 import { MPH, type Hud } from './ui';
 import { Collider } from './world/collider';
 import { PracticeWorld } from './world/practiceWorld';
@@ -50,6 +52,8 @@ const FINE_TILE_ERROR = 1000;
 const RECENTER_STORAGE = 'drift.earth:recenter';
 /** localStorage key for headphones (3D) or speakers sound. */
 const HEADPHONES_STORAGE = 'drift.earth:headphones';
+/** localStorage key for the speed effects (vignette, motion blur, speed lines) being off. */
+const SPEED_FX_STORAGE = 'drift.earth:speedfx';
 /** Reset held this long (s) before the HUD says to keep holding for the road (a tap is shorter). */
 const HOLD_HINT = 0.15;
 /** How long (s) a one-off status message stays up. */
@@ -82,12 +86,14 @@ export class Game {
   private readonly chase: ChaseCamera;
   private car = new CarModel(CARS[DEFAULT_CAR]);
   private readonly effects = new TireEffects();
+  private readonly streaks = new SpeedStreaks();
   private readonly physics: CarPhysics;
   readonly debug: DebugTools;
   private readonly score = new DriftScore();
   private readonly audio = new CarAudio();
   private readonly input: InputManager;
   private readonly minimap = new Minimap();
+  private readonly speedFx: SpeedFx;
   private world: World | null = null;
   private collider: Collider | null = null;
   private phase: Phase = 'idle';
@@ -136,12 +142,13 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
 
+    this.speedFx = new SpeedFx(this.renderer);
     this.chase = new ChaseCamera(window.innerWidth / window.innerHeight);
     this.scene.background = new Color(0x0b0e13);
     this.scene.add(new HemisphereLight(0xdfe9ff, 0x3a3328, 1.6));
     const sun = new DirectionalLight(0xffffff, 2.2);
     sun.position.set(0.4, 1, 0.25);
-    this.scene.add(sun, this.car.root, this.effects.root);
+    this.scene.add(sun, this.car.root, this.effects.root, this.streaks.root);
     this.car.root.visible = false;
 
     this.physics = new CarPhysics({
@@ -185,6 +192,11 @@ export class Game {
       this.audio.setHeadphones(localStorage.getItem(HEADPHONES_STORAGE) === '1');
     } catch {
       // Storage blocked: the default (speakers).
+    }
+    try {
+      this.speedFx.enabled = localStorage.getItem(SPEED_FX_STORAGE) !== '0';
+    } catch {
+      // Storage blocked: the default (on).
     }
 
     this.input = new InputManager(document.getElementById('touch')!, canvas);
@@ -251,6 +263,7 @@ export class Game {
     this.debug.onWorld(world);
     this.car.root.visible = false;
     this.effects.clear();
+    this.streaks.clear();
     this.crumbs = [];
     this.physics.vel.set(0, 0, 0);
     this.score.newRun();
@@ -263,6 +276,8 @@ export class Game {
     if (kmh) this.physics.launch(kmh / 3.6);
     this.debug.event('spawn', { pos: pos.toArray(), heading, kmh, geo: this.world?.geo(pos) ?? null });
     this.chase.snap(pos, heading, CAMERA.distance);
+    this.speedFx.reset();
+    this.streaks.clear();
     this.car.root.visible = true;
     this.effects.liftAll();
     this.crumbs = [];
@@ -296,6 +311,20 @@ export class Game {
     this.audio.setHeadphones(on);
     try {
       localStorage.setItem(HEADPHONES_STORAGE, on ? '1' : '0');
+    } catch {
+      // Storage blocked: for this visit only.
+    }
+  }
+
+  /** Vignette, motion blur and speed lines (the menu toggles them); remembered between visits. */
+  get speedEffects(): boolean {
+    return this.speedFx.enabled;
+  }
+
+  setSpeedEffects(on: boolean): void {
+    this.speedFx.enabled = on;
+    try {
+      localStorage.setItem(SPEED_FX_STORAGE, on ? '1' : '0');
     } catch {
       // Storage blocked: for this visit only.
     }
@@ -410,7 +439,9 @@ export class Game {
     this.debug.dispose();
     this.car.dispose();
     this.effects.dispose();
+    this.streaks.dispose();
     this.sky.dispose();
+    this.speedFx.dispose();
   }
 
   /**
@@ -553,7 +584,15 @@ export class Game {
     }
     this.debug.frame(dt, this.time);
     const r0 = performance.now();
-    this.renderer.render(this.scene, this.chase.camera);
+    const P = this.physics;
+    // The car, its smoke, marks and streaks and the debug layers stay sharp: only the world blurs.
+    this.speedFx.render(this.scene, this.chase.camera, [this.car.root, this.effects.root, this.streaks.root, this.debug.overlay.root], {
+      speed: this.phase === 'driving' ? P.speed : 0,
+      topSpeed: P.car.chassis.topSpeed,
+      vel: P.vel,
+      dt,
+      gameDt: dt * this.debug.timeScale,
+    });
     this.debug.timing(dt * 1000, physMs, performance.now() - r0);
   }
 
@@ -730,6 +769,8 @@ export class Game {
     this.updateEffects(dt * scale, x, z, heading, inp.handbrake);
     const renderPos = new Vector3(x, y, z);
     this.chase.follow(dt, renderPos, heading, P.vel, P.drifting);
+    const frac = this.speedFx.enabled ? P.speed / P.car.chassis.topSpeed : 0;
+    this.streaks.update(dt * scale, { x, y, z, heading }, P.car.chassis, P.speed, frac, this.chase.camera.position, this.chase.distance);
     const geo = this.world!.geo(renderPos);
     // Heading-up: the view's bearing (clockwise from north) points up the map (the big map is north-up).
     if (geo) this.minimap.update(dt, geo.lat, geo.lon, -this.chase.viewYaw, -heading, P.speed);
@@ -750,6 +791,7 @@ export class Game {
         slideR: P.tire.slideR,
         airborne: P.airborne,
         yaw: heading - this.chase.viewYaw,
+        travel: (P.speed > 0.5 ? Math.atan2(-P.vel.x, -P.vel.z) : heading) - this.chase.viewYaw,
       },
       dt,
     );
@@ -875,6 +917,8 @@ export class Game {
   private placeCar(pos: Vector3, heading: number): void {
     this.physics.reset(pos.clone().setY(pos.y + 0.3), heading);
     this.chase.snap(pos, heading, this.chase.distance);
+    this.speedFx.reset();
+    this.streaks.clear();
     this.effects.liftAll();
     this.score.crash();
     this.airTime = 0;
@@ -896,7 +940,9 @@ export class Game {
     if (this.fallGuard) this.fallGuard.y += dy;
     this.stuckRef.pos.applyMatrix4(m);
     this.chase.rebase(m, yaw);
+    this.speedFx.rebase(m);
     this.effects.applyMatrix(m);
+    this.streaks.applyMatrix(m);
     this.spawnPos.applyMatrix4(m);
     this.spawnHeading += yaw;
     for (const c of this.crumbs) {

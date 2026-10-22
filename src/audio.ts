@@ -20,7 +20,10 @@
  *   each gear; reverse's straight-cut gears whine loudest), differential whine
  *   with road speed, and a clunk on every shift.
  * - Tires: front and rear squeal voices pitched by how fast each axle slides,
- *   a rasp from wheelspin, rolling road noise and wind with speed.
+ *   a rasp from wheelspin and rolling road noise with speed.
+ * - Wind: a rush either side that rises in pitch and swells with speed,
+ *   gusting on its own each side, with a low buffeting under it. Sliding
+ *   sideways, it blows harder and from the side the air comes from.
  * - Placement: each voice comes from its place on the car (the tailpipes, the
  *   engine bay, the gearbox, each axle), heard from a few metres behind the
  *   car along the camera's view; the camera itself is too far back to tell
@@ -55,6 +58,8 @@ export interface AudioState {
   airborne: boolean;
   /** The car's heading relative to the camera's view (rad, left +): which way it faces the listener. */
   yaw: number;
+  /** Which way the car is travelling, relative to the camera's view (rad, left +): where the wind comes from. */
+  travel: number;
 }
 
 /** A point on the car (m): x right, y up from the road, z back (the car faces −z, as in CarModel). */
@@ -112,7 +117,7 @@ const SOUNDS: Record<CarId, CarSound> = {
     banks: [0, 1, 1, 0, 1, 0, 0, 1],
     blowdownDeg: 110,
     trimSpread: 0.14,
-    popChance: 0.035,
+    popChance: 0.026,
     // Slightly different pipe lengths keep the banks from sounding identical.
     // Out either side of the rear bumper.
     pipes: [
@@ -149,7 +154,7 @@ const SOUNDS: Record<CarId, CarSound> = {
     // More uneven than the V8: the four's lilt at idle and light load.
     trimSpread: 0.3,
     // Half as many firings as the V8 and still pops more often.
-    popChance: 0.09,
+    popChance: 0.065,
     // One shorter pipe: it rings at 217 Hz and up, not in the V8's sub-bass.
     // Out the middle of the bumper, like the ST's.
     pipes: [[0.0046, [0, 0.3, 2.15]]],
@@ -170,7 +175,7 @@ const SOUNDS: Record<CarId, CarSound> = {
     level: 0.44,
     intake: { base: 220, rev: 450, q: 1.6, gain: 0.7, power: 1, tone: 1, drive: 2.5 },
     pops: { crackle: 2.2, from: 0.3, to: 0.6, overrunFrom: 0.4, overrunTo: 0.75, overrun: 0.4, gain: 0.6, highpass: 220, presence: 2200 },
-    turbo: { whistle: 2400, rise: 3200, gain: 0.02, blowOff: 0.2 },
+    turbo: { whistle: 2400, rise: 3200, gain: 0.02, blowOff: 0.27 },
     // A helical transaxle: quieter final drive than a hypoid rear axle.
     gearTeeth: { [-1]: 33, 1: 13, 2: 17, 3: 21, 4: 26, 5: 29, 6: 32 },
     pinionTeeth: 17,
@@ -363,14 +368,20 @@ export class CarAudio {
   private whineGain!: GainNode;
   private diff!: OscillatorNode;
   private diffGain!: GainNode;
-  // Tires, road, wind
+  // Tires, road
   private rear!: Squeal;
   private front!: Squeal;
   private spinFilter!: BiquadFilterNode;
   private spinGain!: GainNode;
   private roadFilter!: BiquadFilterNode;
   private roadGain!: GainNode;
-  private windGain!: GainNode;
+  // Wind: the rush on the left and right, and the buffeting
+  private wind!: Array<{ band: BiquadFilterNode; gain: GainNode }>;
+  private buffetGain!: GainNode;
+  /** Each side's gusting, and the buffeting's: slow random wanders around 0 (about ±1). */
+  private gust = [0, 0, 0];
+  /** The buffeting's flutter: the same, but quick (several times a second). */
+  private flutter = 0;
   /** The transmission and tire voices' places, which move with the car (see place()). */
   private spots!: Record<'gearbox' | 'diff' | 'front' | 'rear' | 'spin' | 'road', Placed>;
   /** 3D (HRTF) for headphones, else plain level panning for speakers. */
@@ -481,9 +492,18 @@ export class CarAudio {
     this.roadFilter = filter('lowpass', 200, 0.6);
     this.roadGain = gainNode(0);
     this.noiseSource(ctx).connect(this.roadFilter).connect(this.roadGain).connect(spots.road.panner);
-    // Wind is all around: not placed.
-    this.windGain = gainNode(0);
-    this.noiseSource(ctx).connect(filter('highpass', 500)).connect(filter('lowpass', 2800)).connect(this.windGain).connect(bus);
+    // Wind is all around, not on the car: a rush each side, from its own noise
+    // so the two gust apart and sound wide, and a low buffeting in the middle.
+    this.wind = [-0.6, 0.6].map((pan) => {
+      const band = filter('bandpass', 600, 0.5);
+      const gain = gainNode(0);
+      this.noiseSource(ctx).connect(band).connect(gain).connect(new StereoPannerNode(ctx, { pan })).connect(bus);
+      return { band, gain };
+    });
+    // Buffeting: up to 300 Hz, so small speakers that can't play the deep
+    // part still carry some, with the boom around 110 Hz lifted.
+    this.buffetGain = gainNode(0);
+    this.noiseSource(ctx).connect(filter('lowpass', 300, 0.8)).connect(filter('peaking', 110, 1, 5)).connect(this.buffetGain).connect(bus);
 
     // The worklet engine; oscillators if worklets aren't available (they need a secure context).
     if (ctx.audioWorklet) {
@@ -708,7 +728,7 @@ export class CarAudio {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
-    const gains = [this.whineGain, this.diffGain, this.rear.gain, this.front.gain, this.spinGain, this.roadGain, this.windGain];
+    const gains = [this.whineGain, this.diffGain, this.rear.gain, this.front.gain, this.spinGain, this.roadGain, this.buffetGain, ...this.wind.map((w) => w.gain)];
     const rig = this.rig;
     if (rig) gains.push(rig.exhaustGain, rig.intakeGain, ...(rig.whistle ? [rig.whistle.gain] : []));
     for (const g of gains) g.gain.setTargetAtTime(0, t, 0.05);
@@ -804,7 +824,7 @@ export class CarAudio {
     set(this.spinGain.gain, smoothstep(1, 8, s.wheelSpin) * ground * 0.12, 0.05);
     set(this.roadFilter.frequency, 140 + s.speed * 14, 0.1);
     set(this.roadGain.gain, Math.min(0.12, 0.005 + s.speed * 0.0022) * ground * smoothstep(0.5, 3, s.speed), 0.1);
-    set(this.windGain.gain, 0.09 * Math.min(1.5, (s.speed / 50) ** 2), 0.2);
+    this.updateWind(s, dt, t);
 
     // Everything where it is on the car, turned as the car is to the view. The
     // listener stays put (facing −z) and the car sits in front of it.
@@ -816,6 +836,39 @@ export class CarAudio {
       set(panner.positionY, y - AUDIO.listenHeight, 0.02);
       set(panner.positionZ, -x * sin + z * cos - AUDIO.listenDistance, 0.02);
     }
+  }
+
+  /**
+   * Wind: louder with speed (about as speed², levelling off near top speed)
+   * and higher-pitched, gusting each side on its own, faster the faster you
+   * go. Sliding, the body meets the air at an angle: more rush, much more
+   * buffeting, and the side the air comes from louder.
+   *
+   * The buffeting's noise has little energy (only what's under 300 Hz) and
+   * ears are deaf down there, so its gain is several times the rush's to
+   * sit just under it. It flutters quickly as well as gusting, so it reads
+   * as buffeting rather than a steady hum.
+   */
+  private updateWind(s: AudioState, dt: number, t: number): void {
+    const tau = 0.6 - 0.3 * smoothstep(20, 60, s.speed);
+    const a = Math.exp(-dt / tau);
+    // Uniform noise of unit variance, so each gust wanders about ±1.
+    const b = Math.sqrt(1 - a * a) * Math.sqrt(3);
+    for (let i = 0; i < this.gust.length; i++) this.gust[i] = this.gust[i] * a + (Math.random() * 2 - 1) * b;
+    const sideways = Math.abs(Math.sin(s.yaw - s.travel));
+    const cross = Math.sin(s.travel);
+    const rush = 0.1 * Math.min(1.8, (s.speed / 45) ** 2) * (1 + 0.6 * sideways);
+    for (const [i, w] of this.wind.entries()) {
+      // Left first: air from the left (travel left of the view) is louder there.
+      const side = 1 + 0.45 * cross * (i === 0 ? 1 : -1);
+      w.gain.gain.setTargetAtTime(rush * side * Math.max(0.4, 1 + 0.25 * this.gust[i]), t, 0.08);
+      w.band.frequency.setTargetAtTime((300 + 22 * s.speed) * (1 + 0.08 * this.gust[i]), t, 0.08);
+    }
+    const fa = Math.exp(-dt / 0.06);
+    this.flutter = this.flutter * fa + (Math.random() * 2 - 1) * Math.sqrt(1 - fa * fa) * Math.sqrt(3);
+    const shake = Math.max(0.25, 1 + 0.3 * this.gust[2] + 0.3 * this.flutter);
+    const buffet = 0.42 * Math.min(1.6, (s.speed / 50) ** 2) * (1 + 1.2 * sideways) * shake;
+    this.buffetGain.gain.setTargetAtTime(buffet, t, 0.03);
   }
 
   private voice(v: Squeal, gain: number, f: number, t: number): void {

@@ -160,9 +160,14 @@ const menu = new Menu({
     game.setHeadphones(on);
     menu.setHeadphones(on);
   },
+  onSpeedEffects(on) {
+    game.setSpeedEffects(on);
+    menu.setSpeedEffects(on);
+  },
 });
 menu.setApiKey(apiKey);
 menu.setHeadphones(game.headphones);
+menu.setSpeedEffects(game.speedEffects);
 // Before anything is driven, so the first run is in the chosen car.
 const startCar = readCar();
 game.setCar(startCar);

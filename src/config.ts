@@ -141,6 +141,39 @@ export const CAMERA = {
   forwardBias: 0.12,
 };
 
+// Speed effects (speedFx.ts). Each ramps in (smoothstep) between two fractions
+// of the car's top speed (chassis.topSpeed), so both cars feel fast near theirs.
+export const SPEED_FX = {
+  /** Darkening at the screen's corners at full strength (0–1). */
+  vignette: { from: 0.2, to: 1, max: 0.5 },
+  /**
+   * Camera motion blur: the world smears along its own motion on screen, as if
+   * the shutter stayed open `shutter` seconds; never longer than `maxBlur` of
+   * the screen height. The car, its smoke and marks stay sharp. Where you look
+   * it's lighter: `clear` of it is left at a point `clearAhead` screen heights
+   * ahead of the middle (toward where the car is heading), growing back to full
+   * from `clearFrom` to `clearTo` screen heights out (twice that ahead).
+   */
+  blur: { from: 0.3, to: 0.9, shutter: 0.035, maxBlur: 0.03, clear: 0.15, clearFrom: 0.08, clearTo: 0.45, clearAhead: 0.1 },
+  /**
+   * Speed lines: streaks rushing out from where the car is heading, near the
+   * screen's edges. `max` is their opacity; `spacing` the gap between them (px
+   * at 1080 lines, across the middle of the screen); `rate` how fast they rush
+   * outward at top speed (screen heights per second).
+   */
+  lines: { from: 0.45, to: 1.05, max: 0.3, spacing: 34, rate: 2.2 },
+  /**
+   * Streaks peeling off the car (car/streaks.ts): `rate` a second at full
+   * strength, each following a point on the car's flanks or tail for
+   * `attach` s (±half), no longer than `length` s of travel, then left in the
+   * air to drift outward and fade by `life` s. `width` is a share of the
+   * camera's distance, so they stay a couple of pixels wide when it pulls back.
+   */
+  streaks: { from: 0.3, to: 0.95, rate: 45, attach: 0.08, length: 0.1, life: 0.4, opacity: 0.65, width: 0.0022 },
+  /** Smoothing (s), so a crash or a reset doesn't snap them off. */
+  tau: 0.25,
+};
+
 // Read by the loaded world, which hot updates keep (main.ts): edits apply from the next place loaded.
 export const TILES = {
   errorTarget: 10,

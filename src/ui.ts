@@ -246,6 +246,8 @@ export interface MenuHandlers {
   onCar(id: CarId): void;
   /** The sound button: headphones (3D) or speakers. */
   onHeadphones(on: boolean): void;
+  /** The speed effects button: vignette, motion blur and speed lines on or off. */
+  onSpeedEffects(on: boolean): void;
 }
 
 export class Menu {
@@ -260,6 +262,7 @@ export class Menu {
   private readonly keyInput = $<HTMLInputElement>('api-key');
   private readonly resumeRow = $('resume-row');
   private readonly audioOut = $('audio-out');
+  private readonly speedFx = $('speed-fx');
   private readonly roadButton = $<HTMLButtonElement>('back-to-road');
   private readonly carButtons = new Map<CarId, HTMLButtonElement>();
   private device: InputDevice | null = null;
@@ -285,6 +288,7 @@ export class Menu {
       onDebug: handlers.onDebug,
       onCar: handlers.onCar,
       onHeadphones: handlers.onHeadphones,
+      onSpeedEffects: handlers.onSpeedEffects,
     };
     this.h = h;
     const cars = $('cars');
@@ -297,6 +301,7 @@ export class Menu {
     this.roadButton.addEventListener('click', () => h.onRoad());
     $('debug-tools').addEventListener('click', () => h.onDebug());
     this.audioOut.addEventListener('click', () => h.onHeadphones(this.audioOut.getAttribute('aria-pressed') !== 'true'));
+    this.speedFx.addEventListener('click', () => h.onSpeedEffects(this.speedFx.getAttribute('aria-pressed') !== 'true'));
     $('save-key').addEventListener('click', () => {
       const key = this.keyInput.value.trim();
       if (key) h.onKey(key);
@@ -336,6 +341,12 @@ export class Menu {
   setHeadphones(on: boolean): void {
     this.audioOut.setAttribute('aria-pressed', String(on));
     this.audioOut.textContent = on ? 'Sound: headphones (3D)' : 'Sound: speakers';
+  }
+
+  /** Shows whether the speed effects are on. */
+  setSpeedEffects(on: boolean): void {
+    this.speedFx.setAttribute('aria-pressed', String(on));
+    this.speedFx.textContent = on ? 'Speed effects: on' : 'Speed effects: off';
   }
 
   show(paused: boolean): void {
