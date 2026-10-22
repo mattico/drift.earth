@@ -12,6 +12,7 @@
     "capture": "node tools/capture.mjs",
     "trace:report": "node tools/trace-report.mjs",
     "handling": "node tools/handling.mjs",
+    "scenarios": "node tools/scenarios.mjs",
     "roads": "node tools/roads.mjs",
     "surfaces": "node tools/surfaces.mjs",
     "check:key": "node tools/check-no-key.mjs"

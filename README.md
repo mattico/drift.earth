@@ -255,6 +255,24 @@ Google's public tiles stop at a leaf `geometricError` of about 2 m. City texture
 
 The camera pulls back with speed, up to 140 m. The scroll wheel scales the distance between 0.6× and 2.5×. The pitch is 34° below the horizon by default, looking well ahead. **C** steps through 46°, 58°, 70° and 82° (nearly straight down), then wraps. On a controller, D-pad → and ← step up and down the same presets and stop at either end. The right stick swings the camera around the car and tilts it (stick up looks toward the horizon); 1.5 s after you let go it eases back behind the car. **R3** turns that easing back off (the view stays where you leave it) or on again; the choice is remembered.
 
+## Checks
+
+Each of these prints one line per check and exits non-zero on a failure. Times are for a desktop with a GPU.
+
+```sh
+pnpm scenarios                              # the game in headless Chrome, practice track (~40 s)
+pnpm scenarios reset tab --keep-going       # matching scenarios; carry on past a failure
+pnpm scenarios --real                       # also two at a real location (one billable tile load)
+pnpm handling --surfaces --check            # surface tuning targets, both cars (~1 s)
+pnpm handling --compare $(git merge-base master HEAD)   # every handling scenario, both cars, vs where this branch started (~2 s)
+```
+
+- **`pnpm scenarios`** starts its own dev server, opens `/?practice` in headless Chrome, drives the car with key presses and asserts on its state and the debug trace's events (`--list` says what each checks). It covers the reset key (a tap goes back to a breadcrumb on release; a 0.5 s hold puts the car on the nearest street centreline, facing along it, while still held: checked on the car itself, not only on the event), the pause menu's **Back to road**, road teleports from a roof and from inside a block, the big map on Tab, the gravel road's grip blending in front axle first, coasting onto grass, sand and the pond, the cobbles' shake, driving out of the pond, and the debug layers. A console error or page error fails the scenario it happened in. A failure saves a screenshot, the page console (with the WebGL renderer) and the trace to `traces/scenarios/`; a page that never starts saves `load.png` and `load.console.log`, and its scenarios are skipped rather than each retried. `--real` adds the I-35W bridge, from one page load: fixed latitudes and longitudes around it must read deck asphalt, river water on both sides of the deck and a bank lawn's grass (so a shifted, mirrored or rotated surface map fails), all four wheels must read asphalt on the deck, and the car dropped onto that lawn must read grass. `--json`, `--headed`, `--chrome PATH` (or `CHROME_PATH`) and `--gl` (or `DRIFT_GL`: the ANGLE backend; the GPU on Windows and macOS, SwiftShader on Linux by default) are there when needed.
+- **`pnpm handling --surfaces --check`** runs `--surfaces` for both cars and checks each surface against asphalt: gravel's lateral grip, braking and 0–100 km/h, and that drifts last longer on it; grass's lateral grip and braking; sand's coast to a stop; cobbles' grip; water's grip, that the car still crawls after 20 s but no faster than a crawl, and that a coast on it stops within a few seconds. The bounds are in `TARGETS` in `tools/handling.mjs`. `--check` alone implies `--surfaces`.
+- **`pnpm handling --compare <ref>`** runs the handling scenarios at that commit and in the working tree, and lists every number that differs. It takes the same options (`--car`, `--all`, `--surface`, `--surfaces`, a filter, `--json`) and runs both cars unless `--car` picks one. Use it after a change that shouldn't move the handling (surfaces, refactors, debug tools): against the commit your branch started from, `--compare $(git merge-base master HEAD)`, it must say `identical`. (Plain `--compare master` compares with master's tip, so tuning merged there since you branched would show up as yours.) After a deliberate tuning change it shows what moved.
+
+CI runs `pnpm handling --surfaces --check` in the build job and the scenarios in a job of its own, so a flaky browser never holds up a deploy; that job uploads the results (timings, the runner's renderer and fps) and any failure's files as the `scenarios` artifact.
+
 ## Debugging collisions
 
 ### Debug panel (F3, or **Debug tools** in the menu)
@@ -353,7 +371,7 @@ pnpm capture "/?practice" --drive "W:3,W+A:1.5,W+Space:0.4,W+A:2" --debug wire,p
 pnpm capture "/?lat=44.97889&lon=-93.24472&bearing=14&top=1" --drive "W:16" --shots 4 --perf
 ```
 
-This runs headless Chrome with GPU flags (ANGLE/D3D11), starting a dev server if none is running.
+This runs headless Chrome with GPU flags (ANGLE on D3D11 or Metal; SwiftShader on Linux, or `DRIFT_GL`), starting a dev server if none is running.
 - It drives with the given keys and saves the trace, a screenshot and the page console. `--shots` adds periodic screenshots and `--perf` adds a Chrome performance trace.
 - It then prints the report.
 - `--setup "g.physics.reset(...)"` runs code in the page first; `g` is `window.__drift`. `g.teleportToRoad()` puts the car on the nearest road and returns the search; `--debug roads` draws the road centrelines and the spots it tried.
@@ -368,6 +386,8 @@ pnpm handling --car muscle     # the muscle car
 pnpm handling drift --timeline # matching scenarios, with slip°/yaw°/km/h every 0.25 s
 pnpm handling --surface gravel # every scenario on gravel (or cobbles, grass, sand, water)
 pnpm handling --surfaces       # every surface against asphalt
+pnpm handling --surfaces --check  # both cars against the tuning targets (see Checks)
+pnpm handling --compare $(git merge-base master HEAD)  # what this branch changed (see Checks)
 ```
 
 This runs the car physics on a flat plane through scripted inputs (grip, braking, launch, power-over and handbrake drifts, held drifts in each gear, reversing) and prints the slip angle held, yaw rate, speed, path turned, time spent drifting and the driven wheels' mean wheelspin. Scenarios for one layout (lift-off and handbrake tricks for front drive, burnouts and 2nd-gear breakaway for rear drive) only run for such a car, or for any with `--all`. No browser or tiles are needed, so run it after changing any tuning in `src/car/cars.ts` or `src/car/surfaces.ts`.

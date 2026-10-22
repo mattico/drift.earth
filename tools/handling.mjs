@@ -3,16 +3,21 @@
 // inputs and reports how it handles: grip, braking, launch, drifts held in each
 // gear, and recovery. No browser or map tiles; takes a few seconds.
 //
-//   node tools/handling.mjs [filter] [--car hatch|muscle] [--surface ID | --surfaces] [--all] [--timeline] [--json]
+//   node tools/handling.mjs [filter] [--car hatch|muscle] [--surface ID | --surfaces [--check]] [--all] [--timeline] [--json] [--compare REF]
 //
 //   filter       only scenarios whose name contains this text
 //   --car        which car (default: the game's default)
 //   --surface    the ground: asphalt (default), cobbles, gravel, grass, sand, water
 //   --surfaces   compare every surface on the key numbers instead (grip, braking,
 //                launch, speed, coasting, drifts), each also as × asphalt
+//   --check      implies --surfaces: both cars (or --car's) against the tuning
+//                targets (TARGETS below); exits 1 if any is missed
 //   --all        also the front-drive scenarios on a rear-drive car
 //   --timeline   also print slip°/yaw°/km/h every 0.25 s
 //   --json       machine-readable results
+//   --compare REF  run the same (every car unless --car) at commit REF and in
+//                the working tree, and list what differs; exits 1 if anything
+//                does (tools/handling-compare.mjs)
 //
 // Scenario steering is the input (−1 right … +1 left); a drift entered to the
 // left has negative slip.
@@ -22,7 +27,9 @@ import { createServer } from 'vite';
 import { Vector3 } from 'three';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const vite = await createServer({ root: ROOT, logLevel: 'error', server: { middlewareMode: true, hmr: false } });
+// SSR loads only: no client dep optimizer, which would otherwise rewrite (or,
+// closed mid-run, leak temp dirs into) the dep cache a dev server is using.
+const vite = await createServer({ root: ROOT, logLevel: 'error', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] } });
 const { CarPhysics } = await vite.ssrLoadModule('/src/car/physics.ts');
 const { PHYSICS } = await vite.ssrLoadModule('/src/config.ts');
 const { CARS, DEFAULT_CAR } = await vite.ssrLoadModule('/src/car/cars.ts');
@@ -187,8 +194,17 @@ function simulate(kmh, phases, opts = {}, metrics = {}) {
 }
 
 const args = process.argv.slice(2);
+const compareAt = args.indexOf('--compare');
+const compareRef = compareAt >= 0 ? args.splice(compareAt, 2)[1] : null;
+if (compareAt >= 0 && !compareRef) throw new Error('--compare needs a commit, e.g. --compare master');
+// --check only means anything on the surface table: alone it would run the
+// plain scenarios and pass having checked nothing.
+if (args.includes('--check') && !args.includes('--surfaces')) args.push('--surfaces');
+// The arguments as given, less --compare: what both sides of a comparison run with.
+const passOn = [...args];
 const carAt = args.indexOf('--car');
-const carId = carAt >= 0 ? args.splice(carAt, 2)[1] : DEFAULT_CAR;
+const carGiven = carAt >= 0 ? args.splice(carAt, 2)[1] : null;
+let carId = carGiven ?? DEFAULT_CAR;
 if (!CARS[carId]) throw new Error(`unknown car ${carId}; one of ${Object.keys(CARS).join(', ')}`);
 const surfaceArg = args.indexOf('--surface');
 if (surfaceArg >= 0) surface = args.splice(surfaceArg, 2)[1];
@@ -260,31 +276,149 @@ function surfaceSummary() {
   };
 }
 
-if (args.includes('--surfaces')) {
+/**
+ * Tuning targets for `--surfaces --check`: each surface's number against
+ * asphalt's (×) or as it is. The hot hatch's are the agreed targets. The
+ * muscle car's are the same bands, loosened where its tuning sits on or near
+ * an edge today; each loosened bound notes the number it had when set.
+ */
+const TARGETS = {
+  hatch: [
+    { surface: 'gravel', key: 'latG', x: true, lo: 0.6, hi: 0.7 },
+    { surface: 'gravel', key: 'brakeM', x: true, lo: 1.4, hi: 1.7 },
+    { surface: 'gravel', key: 'zeroTo100', x: true, lo: 1.3, hi: 1.6 },
+    // Easier to keep sliding than on asphalt.
+    { surface: 'gravel', key: 'hold', x: true, above: 1 },
+    { surface: 'grass', key: 'latG', x: true, lo: 0.4, hi: 0.5 },
+    { surface: 'grass', key: 'brakeM', x: true, lo: 2, hi: 2.5 },
+    // "About 4 s" from 80 km/h: 3.9 s when set.
+    { surface: 'sand', key: 'coastS', hi: 4.2 },
+    { surface: 'cobbles', key: 'latG', x: true, below: 1 },
+    { surface: 'water', key: 'latG', x: true, below: 0.25 },
+    // Still moving after 20 s flat out: it can crawl out of a pond.
+    { surface: 'water', key: 'kmh20s', above: 0 },
+    // But only crawl (6.5 when set), and a coast stops within a few seconds
+    // (4.7 s when set): water's drag and rolling resistance are doing their job.
+    { surface: 'water', key: 'kmh20s', below: 15 },
+    { surface: 'water', key: 'coastS', hi: 5.5 },
+  ],
+  muscle: [
+    // ×0.70 when set: on the hatch's upper edge.
+    { surface: 'gravel', key: 'latG', x: true, lo: 0.6, hi: 0.75 },
+    // ×1.44 when set: near the hatch's 1.4 floor.
+    { surface: 'gravel', key: 'brakeM', x: true, lo: 1.35, hi: 1.7 },
+    // ×1.58 when set: near the hatch's 1.6 cap.
+    { surface: 'gravel', key: 'zeroTo100', x: true, lo: 1.3, hi: 1.7 },
+    { surface: 'gravel', key: 'hold', x: true, above: 1 },
+    // ×0.41 when set: near the hatch's 0.4 floor.
+    { surface: 'grass', key: 'latG', x: true, lo: 0.37, hi: 0.5 },
+    // ×2.03 when set: near the hatch's 2.0 floor.
+    { surface: 'grass', key: 'brakeM', x: true, lo: 1.9, hi: 2.5 },
+    // 3.8 s when set.
+    { surface: 'sand', key: 'coastS', hi: 4.2 },
+    { surface: 'cobbles', key: 'latG', x: true, below: 1 },
+    { surface: 'water', key: 'latG', x: true, below: 0.25 },
+    { surface: 'water', key: 'kmh20s', above: 0 },
+    // 6.0 km/h and 4.6 s when set.
+    { surface: 'water', key: 'kmh20s', below: 15 },
+    { surface: 'water', key: 'coastS', hi: 5.5 },
+  ],
+};
+const METRICS = {
+  latG: 'lateral grip',
+  brakeM: 'braking 100–0 (m)',
+  zeroTo100: '0–100 km/h (s)',
+  hold: 'drift held (s)',
+  coastS: 'coast 80–0 (s)',
+  kmh20s: 'km/h after 20 s flat out',
+};
+
+/** Every target for `car` against its surfaces table: [{ car, target, value, ok }]. */
+function checkTargets(car, table) {
+  return (TARGETS[car] ?? []).map((target) => {
+    const v = table[target.surface][target.key];
+    const base = table.asphalt[target.key];
+    // Null: never got there (no stop, no 100 km/h), which misses any bound.
+    const value = v === null || (target.x && !base) ? null : target.x ? v / base : v;
+    const ok =
+      value !== null &&
+      (target.lo === undefined || value >= target.lo) &&
+      (target.hi === undefined || value <= target.hi) &&
+      (target.above === undefined || value > target.above) &&
+      (target.below === undefined || value < target.below);
+    return { car, target, value, ok };
+  });
+}
+
+function boundText(t) {
+  const x = t.x ? '×' : '';
+  if (t.lo !== undefined && t.hi !== undefined) return `${x}${t.lo}–${t.hi}`;
+  if (t.hi !== undefined) return `≤ ${x}${t.hi}`;
+  return t.above !== undefined ? `> ${x}${t.above}` : `< ${x}${t.below}`;
+}
+
+/** The --surfaces numbers for the current car, by surface. */
+function surfaceTable() {
   const table = {};
   for (const id of SURFACE_IDS) {
     surface = id;
     table[id] = surfaceSummary();
   }
-  await vite.close();
-  if (args.includes('--json')) console.log(JSON.stringify(table, null, 1));
-  else {
-    const base = table.asphalt;
-    // A value and its ratio to asphalt's.
-    const x = (v, b, digits, unit, w) => {
-      if (v === null) return '—'.padEnd(w);
-      const ratio = b ? ` ×${(v / b).toFixed(2)}` : '';
-      return `${v.toFixed(digits)}${unit}${ratio}`.padEnd(w);
-    };
+  return table;
+}
+
+function printSurfaces(table) {
+  const base = table.asphalt;
+  // A value and its ratio to asphalt's.
+  const x = (v, b, digits, unit, w) => {
+    if (v === null) return '—'.padEnd(w);
+    const ratio = b ? ` ×${(v / b).toFixed(2)}` : '';
+    return `${v.toFixed(digits)}${unit}${ratio}`.padEnd(w);
+  };
+  console.log(
+    `${CARS[carId].name}: ${'surface'.padEnd(8)} ${'lat g'.padEnd(11)} ${'brake 100–0'.padEnd(20)} ${'0–100'.padEnd(13)} ${'km/h @20 s'.padEnd(13)} ${'coast 80–0'.padEnd(14)} ${'drift'.padEnd(13)} held/max slip  spun   drift held`,
+  );
+  for (const [id, m] of Object.entries(table)) {
     console.log(
-      `${CARS[carId].name}: ${'surface'.padEnd(8)} ${'lat g'.padEnd(11)} ${'brake 100–0'.padEnd(20)} ${'0–100'.padEnd(13)} ${'km/h @20 s'.padEnd(13)} ${'coast 80–0'.padEnd(14)} ${'drift'.padEnd(13)} held/max slip  spun   drift held`,
+      `${''.padEnd(CARS[carId].name.length + 2)}${id.padEnd(8)} ${x(m.latG, base.latG, 2, '', 11)} ${x(m.brakeM, base.brakeM, 0, ' m', 11)} ${x(m.brakeS, null, 1, ' s', 8)} ${x(m.zeroTo100, base.zeroTo100, 1, ' s', 13)} ${x(m.kmh20s, base.kmh20s, 0, '', 13)} ${x(m.coastS, base.coastS, 1, ' s', 14)} ${x(m.driftS, base.driftS, 0, ' s', 13)} ${`${m.heldSlip.toFixed(0)}°/${m.maxSlip.toFixed(0)}°`.padEnd(14)} ${`${m.spun}/${m.scenarios}`.padEnd(6)} ${m.hold.toFixed(1)} s${m.holdSpun ? ' SPUN' : ''}`,
     );
-    for (const [id, m] of Object.entries(table)) {
-      console.log(
-        `${''.padEnd(CARS[carId].name.length + 2)}${id.padEnd(8)} ${x(m.latG, base.latG, 2, '', 11)} ${x(m.brakeM, base.brakeM, 0, ' m', 11)} ${x(m.brakeS, null, 1, ' s', 8)} ${x(m.zeroTo100, base.zeroTo100, 1, ' s', 13)} ${x(m.kmh20s, base.kmh20s, 0, '', 13)} ${x(m.coastS, base.coastS, 1, ' s', 14)} ${x(m.driftS, base.driftS, 0, ' s', 13)} ${`${m.heldSlip.toFixed(0)}°/${m.maxSlip.toFixed(0)}°`.padEnd(14)} ${`${m.spun}/${m.scenarios}`.padEnd(6)} ${m.hold.toFixed(1)} s${m.holdSpun ? ' SPUN' : ''}`,
-      );
+  }
+}
+
+if (compareRef) {
+  await vite.close();
+  const { compare } = await import('./handling-compare.mjs');
+  process.exit(await compare(ROOT, compareRef, passOn, carGiven ? [carGiven] : Object.keys(CARS)));
+} else if (args.includes('--surfaces')) {
+  // --check: both cars (or the one asked for), each against its targets.
+  const check = args.includes('--check');
+  const cars = check && !carGiven ? Object.keys(CARS) : [carId];
+  const tables = {};
+  for (const id of cars) {
+    carId = id;
+    tables[id] = surfaceTable();
+  }
+  await vite.close();
+  const results = check ? cars.flatMap((id) => checkTargets(id, tables[id])) : [];
+  const missed = results.filter((r) => !r.ok);
+  if (args.includes('--json')) {
+    const checks = results.map(({ car, target, value, ok }) => ({ car, ...target, bound: boundText(target), value, ok }));
+    console.log(JSON.stringify(check ? { ok: !missed.length, tables, checks } : tables[carId], null, 1));
+  } else {
+    for (const id of cars) {
+      carId = id;
+      printSurfaces(tables[id]);
+    }
+    if (check) {
+      console.log(`\n${'car'.padEnd(7)} ${'surface'.padEnd(8)} ${'target'.padEnd(25)} ${'value'.padEnd(8)} ${'bound'.padEnd(11)}`);
+      for (const r of results) {
+        const v = r.value === null ? '—' : `${r.target.x ? '×' : ''}${r.value.toFixed(r.target.x ? 3 : 1)}`;
+        console.log(`${r.car.padEnd(7)} ${r.target.surface.padEnd(8)} ${METRICS[r.target.key].padEnd(25)} ${v.padEnd(8)} ${boundText(r.target).padEnd(11)} ${r.ok ? 'ok' : 'FAIL'}`);
+      }
+      console.log(missed.length ? `\n${missed.length} of ${results.length} targets missed` : `\nall ${results.length} targets met`);
     }
   }
+  if (missed.length) process.exit(1);
 } else {
   const results = runScenarios();
   await vite.close();

@@ -1,7 +1,8 @@
 # Type-checks, smoke-tests the physics and builds on every push and pull
-# request. Pushes to the default branch (main) also deploy dist/ to GitHub Pages
-# (Settings > Pages > Source: GitHub Actions), with the MAPS_API_KEY Actions
-# secret built in if set.
+# request, and runs the game's scenarios in headless Chrome alongside. Pushes
+# to the default branch (main) also deploy dist/ to GitHub Pages (Settings >
+# Pages > Source: GitHub Actions), with the MAPS_API_KEY Actions secret built
+# in if set.
 name: CI
 
 on:
@@ -48,6 +49,10 @@ jobs:
       # tiles); fails if the simulation throws.
       - run: pnpm handling
 
+      # Each surface against asphalt, for both cars: fails if a tuning target
+      # is missed (TARGETS in tools/handling.mjs).
+      - run: pnpm handling --surfaces --check
+
       - id: pages
         if: env.DEPLOY == 'true'
         uses: actions/configure-pages@v6
@@ -83,6 +88,48 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: dist
+
+  # Drives the real game in headless Chrome through the practice-track
+  # scenarios (tools/scenarios.mjs; no key or network). A job of its own: a
+  # flaky browser must never hold up the build or the deploy. The runner has
+  # Google Chrome but no GPU, so WebGL runs on SwiftShader (tools/browser.mjs).
+  scenarios:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: scenarios-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # A step timeout, well inside the job's: a hung page then fails the step
+      # (a job timeout would cancel it, and skip the upload below). The JSON
+      # keeps the timings and the runner's renderer and fps; progress lines
+      # still go to the log.
+      - name: Scenarios
+        timeout-minutes: 8
+        run: |
+          mkdir -p traces/scenarios
+          node tools/scenarios.mjs --keep-going --json > traces/scenarios/results.json
+
+      # Pass or fail: results.json, and for each failure a screenshot, the
+      # page console and the trace (load.* if the page never started).
+      - if: success() || failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scenarios
+          path: traces/scenarios/
+          retention-days: 14
+          if-no-files-found: ignore
 
   deploy:
     needs: build

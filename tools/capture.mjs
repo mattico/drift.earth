@@ -21,11 +21,9 @@
 //   --base URL       dev server (default http://localhost:5173; started if down)
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright-core';
+import { ensureServer, launchChrome, makeRedact, ROOT, waitForDriving } from './browser.mjs';
 import { report } from './trace-report.mjs';
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const KEYS = { W: 'KeyW', A: 'KeyA', S: 'KeyS', D: 'KeyD', R: 'KeyR', C: 'KeyC', SPACE: 'Space', UP: 'ArrowUp', DOWN: 'ArrowDown', LEFT: 'ArrowLeft', RIGHT: 'ArrowRight' };
 
 const opts = { target: '/?practice', settle: 2, shots: 0, drive: '', debug: '', setup: '', label: '', base: process.env.DRIFT_URL ?? 'http://localhost:5173' };
@@ -52,12 +50,7 @@ const out = resolve(ROOT, opts.out ?? `traces/capture-${stamp}`);
 mkdirSync(dirname(out), { recursive: true });
 
 // Never write the key anywhere, even if the page logs a URL containing it.
-const key = readEnvKey();
-const redact = (s) => {
-  let r = String(s);
-  if (key) r = r.split(key).join('REDACTED');
-  return r.replace(/AIza[0-9A-Za-z_-]{20,}/g, 'AIza…REDACTED').replace(/([?&](?:key|session|token)=)[^&\s"']+/gi, '$1REDACTED');
-};
+const redact = makeRedact();
 
 // Git Bash (MSYS) rewrites a bare "/…" argument into a Windows path.
 if (/^[A-Za-z]:[\/]/.test(opts.target)) {
@@ -68,12 +61,7 @@ const server = await ensureServer(opts.base);
 const url = new URL(opts.target, server.url).href;
 if (!/[?&]practice\b/.test(url)) console.log('note: real-tile load (one billable Map Tiles root request)');
 
-const browser = await chromium.launch({
-  ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: 'chrome' }),
-  headless: !opts.headed,
-  // Without these, headless Chrome falls back to SwiftShader and pegs the CPU.
-  args: ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'],
-});
+const browser = await launchChrome({ headed: opts.headed });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 const consoleLines = [];
 page.on('console', (m) => consoleLines.push(`[${m.type()}] ${redact(m.text())}`));
@@ -120,17 +108,6 @@ const rel = (p) => p.replace(ROOT + '\\', '').replace(ROOT + '/', '');
 console.log(`\nwrote ${rel(out)}.{json,png,console.log}${opts.perf ? ' + .perf.json (open in chrome://tracing or Perfetto)' : ''}`);
 process.exit(exitCode);
 
-async function waitForDriving(page, seconds) {
-  let phase = null;
-  for (let i = 0; i < seconds * 4; i++) {
-    phase = await page.evaluate(() => window.__drift?.phase ?? null).catch(() => null);
-    if (phase === 'driving') return phase;
-    if (phase === 'idle' && i > 8) return phase;
-    await page.waitForTimeout(250);
-  }
-  return phase;
-}
-
 async function drive(page, script, shotEvery) {
   const steps = script
     .split(',')
@@ -159,28 +136,4 @@ async function drive(page, script, shotEvery) {
     }
   }
   for (const c of held) await page.keyboard.up(c);
-}
-
-async function ensureServer(base) {
-  try {
-    const res = await fetch(base, { signal: AbortSignal.timeout(1500) });
-    if (res.ok) return { url: base, close: async () => {} };
-  } catch {
-    // Not running: start one for this capture.
-  }
-  const { createServer } = await import('vite');
-  const vite = await createServer({ root: ROOT, server: { port: 5199, strictPort: false }, logLevel: 'warn' });
-  await vite.listen();
-  const local = vite.resolvedUrls?.local?.[0] ?? 'http://localhost:5199/';
-  console.log(`started dev server at ${local}`);
-  return { url: local, close: () => vite.close() };
-}
-
-function readEnvKey() {
-  try {
-    const m = readFileSync(resolve(ROOT, '.env'), 'utf8').match(/^\s*MAPS_API_KEY\s*=\s*"?([^"\s]+)"?/m);
-    return m ? m[1] : null;
-  } catch {
-    return null;
-  }
 }
