@@ -318,15 +318,16 @@ export class DebugOverlay {
 
   private drawProbes(p: CarPhysics): void {
     // Footprint at ground height.
+    const ch = p.car.chassis;
     const s = Math.sin(p.heading);
     const c = Math.cos(p.heading);
     const y = p.groundY + 0.05;
     const corner = (cx: number, cz: number): [number, number] => [p.pos.x + cx * c + cz * s, p.pos.z - cx * s + cz * c];
     const outline = [
-      corner(-P.halfWidth, -P.halfLength),
-      corner(P.halfWidth, -P.halfLength),
-      corner(P.halfWidth, P.halfLength),
-      corner(-P.halfWidth, P.halfLength),
+      corner(-ch.halfWidth, -ch.halfLength),
+      corner(ch.halfWidth, -ch.halfLength),
+      corner(ch.halfWidth, ch.halfLength),
+      corner(-ch.halfWidth, ch.halfLength),
     ];
     for (let i = 0; i < 4; i++) {
       const a = outline[i];
@@ -364,6 +365,7 @@ export class DebugOverlay {
    * heading (cyan) and the velocity (white, 1 m per 2 m/s), just above the road.
    */
   private drawTyres(p: CarPhysics): void {
+    const ch = p.car.chassis;
     const fx = -Math.sin(p.heading);
     const fz = -Math.cos(p.heading);
     const lx = -Math.cos(p.heading);
@@ -377,8 +379,8 @@ export class DebugOverlay {
       this.seg(x, y, z, x + (fx * f[0] + lx * f[1]) * k, y, z + (fz * f[0] + lz * f[1]) * k, sliding ? 0xffa020 : 0x40ff60);
       return [x, z] as const;
     };
-    const [ax, az] = axle(P.cgToFront, t.forceF, t.slideF > 0);
-    axle(-(P.wheelbase - P.cgToFront), t.forceR, t.slideR > 0);
+    const [ax, az] = axle(ch.cgToFront, t.forceF, t.slideF > 0);
+    axle(-(ch.wheelbase - ch.cgToFront), t.forceR, t.slideR > 0);
     const wx = fx * Math.cos(p.steer) + lx * Math.sin(p.steer);
     const wz = fz * Math.cos(p.steer) + lz * Math.sin(p.steer);
     this.seg(ax - wx * 0.8, y, az - wz * 0.8, ax + wx * 0.8, y, az + wz * 0.8, 0x40e0ff);

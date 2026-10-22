@@ -7,6 +7,10 @@ export interface Actions {
   pause: boolean;
   /** Step through the camera's pitch presets: +1 next, −1 previous, 0 none. */
   cameraCycle: number;
+  /** Whether the step wraps past the last preset (the one-key C) or stops there (the D-pad's two directions). */
+  cameraWrap: boolean;
+  /** Toggle the free camera easing back behind the car once the stick is let go. */
+  cameraRecenter: boolean;
   mute: boolean;
   debug: boolean;
   /** Drop a marker into the debug trace. */
@@ -42,6 +46,7 @@ const PAD = {
   rt: 7,
   view: 8,
   menu: 9,
+  r3: 11,
   up: 12,
   down: 13,
   left: 14,
@@ -195,6 +200,8 @@ export class InputManager {
       reset: p('KeyR'),
       pause: p('Escape', 'KeyP'),
       cameraCycle: p('KeyC') ? 1 : 0,
+      cameraWrap: true,
+      cameraRecenter: false,
       mute: p('KeyM'),
       debug: p('F3', 'Backquote'),
       mark: p('F8'),
@@ -255,8 +262,11 @@ export class InputManager {
       if (edge(PAD.lb)) actions.shiftDown = true;
       if (edge(PAD.view)) actions.gearMode = true;
       // D-pad: left/right step the camera angle, up/down zoom (in the menu it moves focus).
-      if (edge(PAD.right)) actions.cameraCycle = 1;
-      if (edge(PAD.left)) actions.cameraCycle = -1;
+      if (edge(PAD.r3)) actions.cameraRecenter = true;
+      if (edge(PAD.right) || edge(PAD.left)) {
+        actions.cameraCycle = edge(PAD.right) ? 1 : -1;
+        actions.cameraWrap = false;
+      }
       if (held[PAD.up]) actions.zoom *= Math.exp(-ZOOM_RATE * dt);
       if (held[PAD.down]) actions.zoom *= Math.exp(ZOOM_RATE * dt);
       if (edge(PAD.a)) actions.select = true;

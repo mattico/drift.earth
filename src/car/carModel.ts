@@ -18,9 +18,11 @@ import {
   type Material,
   type Object3D,
 } from 'three';
-import { PHYSICS } from '../config';
+import type { CarId, CarSpec } from './cars';
+import { hatchBody } from './hatchBody';
 
-const WHEEL_R = 0.33;
+/** The wheels sit this much wider than the ground probes (cornerX). */
+const WHEEL_SPREAD = 1.08;
 
 export interface CarPose {
   x: number;
@@ -75,6 +77,63 @@ function ghostMaterial(color: Color): ShaderMaterial {
   });
 }
 
+/** What a body builder gets: the car, shared materials, and `part` to add a mesh to the body. */
+export interface BodyKit {
+  spec: CarSpec;
+  /** Overall length and width, from the footprint. */
+  L: number;
+  W: number;
+  /** Wheel centres: ±wheelX across, ±wheelZ along. */
+  wheelX: number;
+  wheelZ: number;
+  paint: MeshStandardMaterial;
+  dark: MeshStandardMaterial;
+  glass: MeshStandardMaterial;
+  head: MeshStandardMaterial;
+  /** Brake and reverse lights: CarModel drives their glow. */
+  brake: MeshStandardMaterial;
+  reverse: MeshStandardMaterial;
+  /** Adds a mesh to the body at (x, y, z), car space: −Z forward, y up from the road. */
+  part(geom: BufferGeometry, mat: Material, x: number, y: number, z: number): Mesh;
+}
+
+/** A builder's result: the main body mesh (drawn last of the x-ray ghosts), and optionally its own wheel. */
+export interface Body {
+  shell: Mesh;
+  /**
+   * One wheel (tyre and rim) centred on its axle, which runs along X, its face
+   * toward +X (mirrored for the left side); cloned for all four.
+   */
+  wheel?: Object3D;
+  /** Parts of that wheel that steer but don't spin (brake calipers); same frame, also mirrored. */
+  hub?: Object3D;
+}
+
+/** Adds a car's body (everything but the wheels) through `kit.part`. */
+export type BodyBuilder = (kit: BodyKit) => Body;
+
+/** Rear-drive coupe: a slab with a glasshouse, twin stripes, ducktail spoiler. */
+function muscleBody(k: BodyKit): Body {
+  const { L, W, paint, dark, glass, part } = k;
+  const stripe = new MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+  const shell = part(new BoxGeometry(W, 0.55, L), paint, 0, 0.6, 0);
+  part(taperedBox(W * 0.86, 0.48, L * 0.48, 0.78), glass, 0, 1.11, 0.15);
+  part(new BoxGeometry(W * 0.8, 0.04, L * 0.3), paint, 0, 1.37, 0.15); // roof
+  part(new BoxGeometry(0.35, 0.02, L * 1.001), stripe, 0.22, 0.885, 0);
+  part(new BoxGeometry(0.35, 0.02, L * 1.001), stripe, -0.22, 0.885, 0);
+  part(new BoxGeometry(W * 1.02, 0.18, 0.2), dark, 0, 0.42, -L / 2); // bumpers
+  part(new BoxGeometry(W * 1.02, 0.18, 0.2), dark, 0, 0.42, L / 2);
+  part(new BoxGeometry(W * 1.05, 0.06, 0.45), dark, 0, 1.0, L / 2 - 0.25); // spoiler
+  for (const s of [-1, 1]) {
+    part(new BoxGeometry(0.4, 0.14, 0.05), k.head, s * 0.6, 0.68, -L / 2 - 0.01);
+    part(new BoxGeometry(0.38, 0.14, 0.05), k.brake, s * 0.6, 0.72, L / 2 + 0.01);
+    part(new BoxGeometry(0.14, 0.1, 0.05), k.reverse, s * 0.25, 0.72, L / 2 + 0.01);
+  }
+  return { shell };
+}
+
+const BODIES: Record<CarId, BodyBuilder> = { muscle: muscleBody, hatch: hatchBody };
+
 /** Low-poly procedural car. Faces −Z; root yaw = heading, body carries pitch/roll. */
 export class CarModel {
   readonly root = new Group();
@@ -83,14 +142,27 @@ export class CarModel {
   private readonly spinners: Group[] = [];
   private readonly brakeMat = new MeshStandardMaterial({ color: 0x400000, emissive: 0xff1a1a, emissiveIntensity: 0.4 });
   private readonly reverseMat = new MeshStandardMaterial({ color: 0x777777, emissive: 0xffffff, emissiveIntensity: 0 });
+  private readonly wheelR: number;
   private wheelAngle = 0;
+  /** Front and rear wheel contact points in car space (for skid marks / smoke). */
+  readonly frontWheels: ReadonlyArray<[number, number]>;
+  readonly rearWheels: ReadonlyArray<[number, number]>;
 
-  constructor(color = 0xff3b30) {
-    const paint = new MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.25 });
+  constructor(readonly spec: CarSpec) {
+    const ch = spec.chassis;
+    const wheelR = (this.wheelR = spec.drivetrain.wheelRadius);
+    this.frontWheels = [
+      [-ch.cornerX, -ch.cornerZ],
+      [ch.cornerX, -ch.cornerZ],
+    ];
+    this.rearWheels = [
+      [-ch.cornerX, ch.cornerZ],
+      [ch.cornerX, ch.cornerZ],
+    ];
+    const paint = new MeshStandardMaterial({ color: spec.paint, roughness: 0.4, metalness: 0.25 });
     const dark = new MeshStandardMaterial({ color: 0x15171a, roughness: 0.8 });
     const glass = new MeshStandardMaterial({ color: 0x1b2633, roughness: 0.1, metalness: 0.6 });
-    const stripe = new MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
-    const headMat = new MeshStandardMaterial({ color: 0xdddddd, emissive: 0xfff6d5, emissiveIntensity: 1.2 });
+    const head = new MeshStandardMaterial({ color: 0xdddddd, emissive: 0xfff6d5, emissiveIntensity: 1.2 });
 
     this.root.add(this.body);
     const parts: Mesh[] = [];
@@ -101,37 +173,39 @@ export class CarModel {
       parts.push(m);
       return m;
     };
+    const { shell, wheel, hub } = BODIES[spec.id]({
+      spec,
+      L: ch.halfLength * 2,
+      W: ch.halfWidth * 2,
+      wheelX: ch.cornerX * WHEEL_SPREAD,
+      wheelZ: ch.cornerZ,
+      paint,
+      dark,
+      glass,
+      head,
+      brake: this.brakeMat,
+      reverse: this.reverseMat,
+      part,
+    });
 
-    const L = PHYSICS.halfLength * 2;
-    const W = PHYSICS.halfWidth * 2;
-    const shell = part(new BoxGeometry(W, 0.55, L), paint, 0, 0.6, 0);
-    part(taperedBox(W * 0.86, 0.48, L * 0.48, 0.78), glass, 0, 1.11, 0.15);
-    part(new BoxGeometry(W * 0.8, 0.04, L * 0.3), paint, 0, 1.37, 0.15); // roof
-    part(new BoxGeometry(0.35, 0.02, L * 1.001), stripe, 0.22, 0.885, 0);
-    part(new BoxGeometry(0.35, 0.02, L * 1.001), stripe, -0.22, 0.885, 0);
-    part(new BoxGeometry(W * 1.02, 0.18, 0.2), dark, 0, 0.42, -L / 2); // bumpers
-    part(new BoxGeometry(W * 1.02, 0.18, 0.2), dark, 0, 0.42, L / 2);
-    part(new BoxGeometry(W * 1.05, 0.06, 0.45), dark, 0, 1.0, L / 2 - 0.25); // spoiler
-    for (const s of [-1, 1]) {
-      part(new BoxGeometry(0.4, 0.14, 0.05), headMat, s * 0.6, 0.68, -L / 2 - 0.01);
-      part(new BoxGeometry(0.38, 0.14, 0.05), this.brakeMat, s * 0.6, 0.72, L / 2 + 0.01);
-      part(new BoxGeometry(0.14, 0.1, 0.05), this.reverseMat, s * 0.25, 0.72, L / 2 + 0.01);
+    let proto = wheel;
+    if (!proto) {
+      const rimMat = new MeshStandardMaterial({ color: 0xc8ccd2, metalness: 0.8, roughness: 0.3 });
+      proto = new Group().add(
+        new Mesh(new CylinderGeometry(wheelR, wheelR, 0.26, 16).rotateZ(Math.PI / 2), dark),
+        new Mesh(new BoxGeometry(0.27, wheelR * 1.3, 0.12), rimMat),
+      );
     }
-
-    const tyre = new CylinderGeometry(WHEEL_R, WHEEL_R, 0.26, 16).rotateZ(Math.PI / 2);
-    const rim = new BoxGeometry(0.27, WHEEL_R * 1.3, 0.12);
-    const rimMat = new MeshStandardMaterial({ color: 0xc8ccd2, metalness: 0.8, roughness: 0.3 });
-    for (const [x, z] of [
-      [-PHYSICS.cornerX, -PHYSICS.cornerZ],
-      [PHYSICS.cornerX, -PHYSICS.cornerZ],
-      [-PHYSICS.cornerX, PHYSICS.cornerZ],
-      [PHYSICS.cornerX, PHYSICS.cornerZ],
-    ]) {
+    for (const [x, z] of [...this.frontWheels, ...this.rearWheels]) {
       const pivot = new Group();
-      pivot.position.set(x * 1.08, WHEEL_R, z);
-      const spin = new Group();
-      spin.add(new Mesh(tyre, dark), new Mesh(rim, rimMat));
+      pivot.position.set(x * WHEEL_SPREAD, wheelR, z);
+      const w = proto.clone();
+      const spin = new Group().add(w);
       pivot.add(spin);
+      const h = hub?.clone();
+      if (h) pivot.add(h);
+      // A builder's own wheel has its face on +X; the left side gets the mirror image.
+      if (wheel && x < 0) for (const o of [w, h]) if (o) o.scale.x = -1;
       this.body.add(pivot);
       this.spinners.push(spin);
       if (z < 0) this.frontPivots.push(pivot);
@@ -142,16 +216,18 @@ export class CarModel {
     // geometry. Visible car pixels write stencil 1, so the ghost never shows
     // through the car itself; each ghost pixel writes 1 too, so overlapping
     // parts don't stack up into an opaque blob.
-    for (const m of [paint, dark, glass, stripe, headMat, rimMat, this.brakeMat, this.reverseMat]) {
-      m.stencilWrite = true;
-      m.stencilRef = 1;
-      m.stencilFunc = AlwaysStencilFunc;
-      m.stencilZPass = ReplaceStencilOp;
-    }
     // After the world: three sorts opaque meshes by material before depth, and
     // a car drawn first would stamp the stencil before a deck covers it.
     this.body.traverse((o) => {
-      if ((o as Mesh).isMesh) o.renderOrder = 1;
+      const mesh = o as Mesh;
+      if (!mesh.isMesh) return;
+      mesh.renderOrder = 1;
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        m.stencilWrite = true;
+        m.stencilRef = 1;
+        m.stencilFunc = AlwaysStencilFunc;
+        m.stencilZPass = ReplaceStencilOp;
+      }
     });
     const ghosts = new Map<Material, ShaderMaterial>();
     for (const p of parts) {
@@ -163,16 +239,18 @@ export class CarModel {
       }
       const ghost = new Mesh(p.geometry, g);
       ghost.position.copy(p.position);
+      ghost.rotation.copy(p.rotation);
+      ghost.scale.copy(p.scale);
       // Each pixel goes to the first ghost drawn there, so draw what the chase
       // camera sees on top first (cabin, roof, stripes, lights), then the
       // shell. (No tyres: they dip into the road and would glint through it.)
-      ghost.renderOrder = p === shell ? 11 : 10;
+      ghost.renderOrder = p === shell ? 11 : mat === glass ? 10.5 : 10;
       p.parent!.add(ghost);
     }
 
     // Soft blob shadow; the photogrammetry has no dynamic shadows.
     const shadow = new Mesh(
-      new PlaneGeometry(W * 1.35, L * 1.2).rotateX(-Math.PI / 2),
+      new PlaneGeometry(ch.halfWidth * 2 * 1.35, ch.halfLength * 2 * 1.2).rotateX(-Math.PI / 2),
       new MeshBasicMaterial({
         map: blobTexture(),
         transparent: true,
@@ -198,20 +276,30 @@ export class CarModel {
     this.body.rotation.x = MathUtils.lerp(this.body.rotation.x, pose.pitch, k);
     this.body.rotation.z = MathUtils.lerp(this.body.rotation.z, -pose.roll, k);
     for (const p of this.frontPivots) p.rotation.y = pose.steer;
-    this.wheelAngle -= (pose.vForward / WHEEL_R) * dt;
+    this.wheelAngle -= (pose.vForward / this.wheelR) * dt;
     for (const s of this.spinners) s.rotation.x = this.wheelAngle;
     this.brakeMat.emissiveIntensity = pose.braking ? 3 : 0.4;
     this.reverseMat.emissiveIntensity = pose.reversing ? 2 : 0;
   }
 
-  /** Rear wheel contact points in car space (for skid marks / smoke). */
-  static readonly rearWheels: ReadonlyArray<[number, number]> = [
-    [-PHYSICS.cornerX, PHYSICS.cornerZ],
-    [PHYSICS.cornerX, PHYSICS.cornerZ],
-  ];
+  /** Removes the car from the scene and frees its GPU resources (switching cars). */
+  dispose(): void {
+    this.root.removeFromParent();
+    const seen = new Set<{ dispose(): void }>();
+    this.root.traverse((o) => {
+      const mesh = o as Mesh;
+      if (!mesh.isMesh) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const r of [mesh.geometry, ...mats, ...mats.map((m) => (m as MeshBasicMaterial).map)]) {
+        if (!r || seen.has(r)) continue;
+        seen.add(r);
+        r.dispose();
+      }
+    });
+  }
 }
 
-function taperedBox(w: number, h: number, l: number, topScale: number): BoxGeometry {
+export function taperedBox(w: number, h: number, l: number, topScale: number): BoxGeometry {
   const g = new BoxGeometry(w, h, l);
   const pos = g.attributes.position;
   for (let i = 0; i < pos.count; i++) {

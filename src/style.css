@@ -172,6 +172,16 @@ body {
   text-align: center;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
+/* Bigger on screens above 1080p, where 180 px reads small. */
+@media (min-width: 1921px) and (min-height: 1000px) {
+  .minimap {
+    width: 240px;
+  }
+  .minimap canvas {
+    width: 240px;
+    height: 240px;
+  }
+}
 
 .cluster {
   position: absolute;
@@ -467,6 +477,269 @@ body {
   pointer-events: none;
 }
 
+/* Debug panel tabs and the Tuning tab (debug/tuning.ts). */
+.debug-panel.dbg-wide {
+  width: min(480px, calc(100vw - 32px));
+}
+.dbg-head .dbg-tabs {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+}
+.dbg-tab {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.dbg-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: rgba(255, 255, 255, 0.07);
+}
+.tun select,
+.tun input,
+.tun textarea {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  outline: none;
+}
+.tun select:focus,
+.tun textarea:focus {
+  border-color: rgba(255, 77, 61, 0.7);
+}
+.tun-select {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 4px;
+}
+.tun-select option {
+  background: #141922;
+}
+.tun-car {
+  color: var(--muted);
+  font-size: 11px;
+}
+.tun-dirty {
+  color: var(--accent-2);
+  font-size: 11px;
+}
+.tun-text {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+}
+.tun-paste {
+  margin-bottom: 6px;
+}
+.tun .tun-textarea {
+  display: block;
+  width: 100%;
+  margin-bottom: 5px;
+  padding: 6px;
+  font: 11px/1.4 ui-monospace, Consolas, monospace;
+  resize: vertical;
+}
+.tun-msg {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: rgba(255, 90, 90, 0.16);
+  border: 1px solid rgba(255, 90, 90, 0.45);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.tun-warn {
+  background: rgba(255, 210, 63, 0.12);
+  border-color: rgba(255, 210, 63, 0.4);
+}
+.tun-group {
+  border-top: 1px solid var(--line);
+  padding: 2px 0;
+}
+.tun-group summary {
+  cursor: pointer;
+  padding: 4px 0;
+  font-weight: 600;
+  font-size: 12px;
+}
+.tun-count {
+  color: var(--accent-2);
+  font-weight: 400;
+}
+.tun-body {
+  padding: 0 0 6px;
+}
+.tun-field {
+  display: grid;
+  grid-template-columns: 118px 1fr auto;
+  align-items: center;
+  gap: 2px 6px;
+  min-height: 24px;
+}
+.tun-label {
+  grid-column: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 11px;
+}
+/* Tuned away from stock… */
+.tun-field.tuned .tun-label {
+  color: var(--accent-2);
+}
+/* …and changed since the last save. */
+.tun-field.changed .tun-label::before {
+  content: '● ';
+  color: var(--accent-2);
+}
+.tun-ctl {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.tun-wide .tun-ctl {
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  padding-left: 10px;
+}
+.tun-x {
+  grid-column: 3;
+  grid-row: 1;
+  padding: 0 5px;
+  font-size: 11px;
+}
+.tun-absent .dbg-btn {
+  grid-column: 2;
+  justify-self: start;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.tun .tun-slider {
+  flex: 1;
+  min-width: 40px;
+  height: 16px;
+  accent-color: var(--accent);
+  background: none;
+  border: 0;
+}
+.tun .tun-num {
+  width: 72px;
+  padding: 2px 4px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+/* No spinners: they cover the digits, and the slider is there for nudging. */
+.tun .tun-num::-webkit-inner-spin-button,
+.tun .tun-num::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.tun .tun-num:focus {
+  border-color: rgba(255, 77, 61, 0.7);
+}
+.tun .tun-num.bad {
+  border-color: var(--bad);
+  background: rgba(255, 90, 90, 0.18);
+}
+.tun-unit {
+  width: 44px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.tun-list .tun-unit {
+  width: auto;
+}
+.tun-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.tun .tun-cell .tun-num {
+  width: 56px;
+}
+.tun-list > .dbg-btn {
+  align-self: flex-end;
+  padding: 2px 8px;
+}
+.tun-wide .tun-curve-wrap {
+  flex-direction: column;
+  align-items: stretch;
+}
+.tun-plot svg {
+  display: block;
+  width: 100%;
+  height: 64px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+}
+.tun-plot polyline {
+  fill: none;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.tun-tq {
+  stroke: var(--accent);
+}
+.tun-pw {
+  stroke: var(--accent-2);
+}
+.tun-redline {
+  stroke: var(--muted);
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+.tun-plot-key {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.tun-tq-key {
+  color: var(--accent);
+}
+.tun-pw-key {
+  color: var(--accent-2);
+}
+.tun-curve {
+  align-self: flex-start;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+.tun-curve th {
+  color: var(--muted);
+  font-weight: 400;
+  text-align: right;
+  padding: 0 4px;
+}
+.tun-curve td {
+  padding: 1px 2px;
+}
+.tun .tun-curve .tun-num {
+  width: 64px;
+}
+.tun-hp {
+  width: 36px;
+  text-align: right;
+  color: var(--muted);
+}
+.tun-curve .dbg-btn {
+  padding: 0 5px;
+  font-size: 11px;
+}
+
 /* ---------- Attribution (Google policy: logo + data attributions always visible) ---------- */
 
 .attribution {
@@ -702,6 +975,69 @@ input:focus {
   color: var(--muted);
 }
 
+/* Car picker: one card per car, the one in use outlined in the accent. */
+.cars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.car {
+  position: relative;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.car:hover {
+  border-color: rgba(255, 77, 61, 0.6);
+}
+.car[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: linear-gradient(160deg, rgba(255, 77, 61, 0.2), rgba(255, 77, 61, 0.05));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.car b {
+  display: block;
+  font-size: 15px;
+  padding-right: 22px;
+}
+/* A tick in the corner of the chosen car. */
+.car[aria-pressed='true']::after {
+  content: '✓';
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 18px;
+  text-align: center;
+}
+.car-spec {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-2);
+  font-variant-numeric: tabular-nums;
+}
+.car-blurb {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .menu-footer {
   margin-top: 18px;
   display: flex;
@@ -870,5 +1206,21 @@ body.gamepad .suggestions li:focus {
   }
   .menu-panel {
     padding: 20px;
+  }
+  /* Two narrow cards: tighter, so the picker doesn't push the spots far down. */
+  .cars {
+    gap: 8px;
+    grid-template-columns: 1fr 1fr;
+  }
+  .car {
+    padding: 10px 12px;
+    line-height: 1.35;
+  }
+  .car b {
+    font-size: 14px;
+  }
+  .car-spec,
+  .car-blurb {
+    font-size: 11px;
   }
 }

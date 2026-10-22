@@ -1,0 +1,102 @@
+# Type-checks, smoke-tests the physics and builds on every push and pull
+# request. Pushes to the default branch (main) also deploy dist/ to GitHub Pages
+# (Settings > Pages > Source: GitHub Actions), with the MAPS_API_KEY Actions
+# secret built in if set.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # A newer commit on the same PR supersedes the old run; branch pushes queue
+    # so a deploy is never cut off halfway through its build.
+    concurrency:
+      group: ci-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+      # configure-pages reads the Pages site's URL and base path.
+      pages: read
+    env:
+      DEPLOY: ${{ github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    outputs:
+      deploy: ${{ env.DEPLOY }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # No version: it installs the one pinned by packageManager in package.json.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      # Runs the car physics headless through scripted inputs (no browser or
+      # tiles); fails if the simulation throws.
+      - run: pnpm handling
+
+      - id: pages
+        if: env.DEPLOY == 'true'
+        uses: actions/configure-pages@v6
+
+      # The site is served from /<repo>/, or / on a custom domain (where
+      # configure-pages gives an empty base_path, which must survive: an
+      # expression's || would replace it). PR builds use the project-site path
+      # so sub-path breakage shows up before merge.
+      #
+      # Vite inlines MAPS_ and VITE_ variables into the bundle. A deploy ships
+      # the MAPS_API_KEY secret: a key restricted by HTTP referrer to the Pages
+      # origin, so visitors can drive without one of their own. Other builds
+      # (PRs, branches) get no key.
+      - name: Build
+        run: |
+          if [ "$DEPLOY" = true ]; then export BASE_PATH="$PAGES_BASE"; else export BASE_PATH="/$REPO"; fi
+          pnpm exec vite build
+        env:
+          PAGES_BASE: ${{ steps.pages.outputs.base_path }}
+          REPO: ${{ github.event.repository.name }}
+          MAPS_API_KEY: ${{ env.DEPLOY == 'true' && secrets.MAPS_API_KEY || '' }}
+          VITE_GOOGLE_MAPS_KEY: ''
+
+      # Any other key-shaped string (one leaked from somewhere else) fails it.
+      - name: Check dist/ for API keys
+        run: pnpm check:key
+        env:
+          ALLOWED_KEY: ${{ env.DEPLOY == 'true' && secrets.MAPS_API_KEY || '' }}
+
+      - if: env.DEPLOY == 'true'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One deploy at a time, and never cancel one in progress.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

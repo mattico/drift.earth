@@ -61,9 +61,22 @@ function traceSink(key: string | undefined): Plugin {
   };
 }
 
+/**
+ * Public path the build is served from. GitHub Pages serves a project site
+ * under /<repo>/, so the deploy workflow passes configure-pages' base_path as
+ * BASE_PATH ("/drift.earth", or "" for a custom domain). Vite wants leading
+ * and trailing slashes; unset means the site root.
+ */
+function basePath(): string {
+  const path = (process.env.BASE_PATH ?? '').replace(/^\/+|\/+$/g, '');
+  return path ? `/${path}/` : '/';
+}
+
 // `.env` holds the key as MAPS_API_KEY; expose that prefix to client code
-// alongside Vite's default VITE_ prefix.
+// alongside Vite's default VITE_ prefix. Whatever it holds is inlined into a
+// production build, so CI builds without one (tools/check-no-key.mjs).
 export default defineConfig(({ mode }) => ({
+  base: basePath(),
   envPrefix: ['VITE_', 'MAPS_'],
   plugins: [traceSink(loadEnv(mode, process.cwd(), '').MAPS_API_KEY)],
   server: { watch: { ignored: ['**/traces/**'] } },

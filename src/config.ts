@@ -4,72 +4,14 @@ export const PHYSICS = {
   dt: 1 / 120,
   maxSubsteps: 12,
 
-  // Body / footprint
-  wheelbase: 2.6,
-  halfWidth: 0.9,
-  halfLength: 2.15,
-  cornerX: 0.78, // ground-probe offsets (≈ wheel contact patches)
-  cornerZ: 1.3,
-
-  // Chassis: a single-track ("bicycle") model with a tyre at each axle. Mass
-  // and engine come from DRIVETRAIN; drag and rolling resistance are per kg.
-  topSpeed: 50, // roughly where drag balances power; scales camera pull-back
-  topSpeedReverse: 12,
-  reverseAccel: 5,
-  rollingDecel: 0.35,
-  dragK: 0.00135,
-  yawInertia: 2100, // kg·m²
-  cgToFront: 1.25, // centre of mass to front axle (rear is wheelbase − this)
-  cgHeight: 0.5, // sets how much load braking and power shift between axles
+  // Car-specific values (footprint, chassis, tyres, steering, brakes,
+  // stability control, drivetrain) live in car/cars.ts.
   // Chassis integration substeps per physics step (tyre forces are stiff).
   substeps: 3,
-
-  // Tyres. Force rises with slip to μ·load at the peak slip angle (lateral) or
-  // ratio (longitudinal, wheel vs road speed), then falls to `slide`·peak when
-  // sliding. Combined slip shares one friction budget, so a spinning or locked
-  // rear wheel has little sideways grip left: that is what lets the rear step
-  // out under power or the handbrake.
-  muFront: 1.4,
-  muRear: 1.5, // drive and braking…
-  muRearSide: 1.5, // …and cornering
-  peakSlipAngle: 7 * (Math.PI / 180),
-  peakSlipRatio: 0.12,
-  slideFront: 0.8,
-  slideRear: 0.72,
   // Below this speed (m/s) slip is measured against it instead, so the tyres
   // act like stiff dampers when nearly stopped rather than chattering.
   tyreMinSpeed: 3,
-
-  // Steering. The command is a road-wheel angle (speed-scaled, rate-limited so
-  // digital input feels analogue) added to a caster-like self-alignment: with
-  // the wheel centred, the front tyres point along their direction of travel,
-  // so a sliding car countersteers itself and the input steers relative to the
-  // path, as an experienced driver's hands would.
-  steerMax: 0.62,
-  steerSpeedFalloff: 18, // δmax = steerMax / (1 + |v| / falloff)
-  steerRate: 4.5,
-  steerReturn: 7,
-  steerAlign: 1, // 0 = none, 1 = front tyres fully trail the direction of travel
-  wheelLock: 52 * (Math.PI / 180), // road-wheel angle limit, countersteer included
-
-  // Brakes. The foot brake has ABS (never locks); the handbrake locks the rear
-  // and disengages the clutch while it is held.
-  brakeDecel: 16, // m/s² the foot brake asks for…
-  brakeFront: 0.65, // …front share
-  absLimit: 0.92, // braking force cap as a share of the tyre's grip
-  handbrakeForce: 1.0, // rear brake force at full pull, × weight
   pedalTau: 0.1, // throttle and handbrake smoothing, so tapping a key feathers
-
-  // Stability control: yaw acceleration (rad/s² per rad of rear slip past its
-  // peak, never more than reverses the yaw) when the rear lets go without the
-  // driver asking: no handbrake, wheelspin or drift for stabilityOff seconds.
-  stability: 120,
-  stabilityOff: 1,
-
-  // Past this slip angle a yaw torque (rad/s² per rad over) helps the car back
-  // from a spin, so a keyboard driver can over-rotate and still recover.
-  spinAngle: 55 * (Math.PI / 180),
-  spinAssist: 25,
 
   // Drift detection, read off the slide for scoring, smoke and the camera.
   driftEnterSpeed: 8,
@@ -111,11 +53,14 @@ export const PHYSICS = {
   // a few metres deep, so a taller deck is allowed when it ends this soon.
   skywayMaxDeck: 14,
   skywayMaxDepth: 9,
-  // Car-sized lumps on flat road (baked parked cars, smeared "ghost" cars) are
-  // driven through: no taller than blobMaxHeight, road again within
-  // blobMaxDepth ahead and blobMaxHalfWidth to each side, nothing overhead.
-  blobMaxHeight: 2.2,
-  blobMaxDepth: 7,
+  // Vehicle-sized lumps on the road (baked parked cars, vans and small trucks,
+  // smeared "ghost" cars) are driven through: no taller than blobMaxHeight,
+  // road again within blobMaxDepth ahead and blobMaxHalfWidth to each side,
+  // nothing overhead. Heights are measured from the plane of the road the car
+  // is on, so hills don't count as lumps.
+  blobMaxHeight: 3,
+  blobMaxDepth: 10,
+  blobRowGap: 3.5, // past this far in, one road sample ends a lump (parked bumper to bumper)
   blobMaxHalfWidth: 4,
   blobRoadTol: 0.3,
   blobTopSlack: 0.3, // a blob's top must be within this of where the probe hit it
@@ -162,54 +107,6 @@ export const PHYSICS = {
   tunnelScanRange: 220,
   tunnelMaxLength: 1200,
   impactThreshold: 5,
-};
-
-/**
- * Engine and gearbox. 470 N·m peak at 4500–5000 rpm, about 395 hp from 7500 to
- * the 8500 redline. Redline speeds: 87, 121, 155, 187, 217, 246 km/h = 54, 75,
- * 96, 116, 135, 153 mph (top speed is drag-limited).
- */
-export const DRIVETRAIN = {
-  mass: 1250,
-  wheelRadius: 0.33,
-  finalDrive: 3.9,
-  gears: [3.1, 2.25, 1.75, 1.45, 1.25, 1.1],
-  reverse: 3.3,
-  efficiency: 0.88,
-  idleRpm: 900,
-  redline: 8500,
-  limiter: 8800,
-  /** Fuel cut each time the limiter is hit (s). */
-  limiterCut: 0.06,
-  /** Below this wheel rpm the clutch slips; at full throttle the engine holds launchRpm. */
-  clutchRpm: 1300,
-  launchRpm: 4200,
-  /** rpm → N·m. */
-  torque: [
-    [800, 260],
-    [1500, 320],
-    [2500, 385],
-    [3500, 440],
-    [4500, 470],
-    [5000, 470],
-    [5800, 455],
-    [6500, 430],
-    [7200, 390],
-    [7800, 360],
-    [8500, 330],
-    [8800, 315],
-  ] as Array<[number, number]>,
-  /** Engine braking torque at redline, scaling with rpm (stronger in lower gears). */
-  engineBrakeTorque: 95,
-  /** Rotating inertia (kg·m²): both rear wheels and axles; the engine's, felt through the gear ratio. */
-  wheelInertia: 2.2,
-  engineInertia: 0.2,
-  shiftTime: 0.14,
-  /** Auto box: shift up / down at these rpm, from light to full throttle. */
-  autoUpRpm: [3800, 8200],
-  autoDownRpm: [1600, 4300],
-  /** Minimum time between automatic shifts. */
-  autoHold: 0.6,
 };
 
 export const CAMERA = {

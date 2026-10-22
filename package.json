@@ -11,7 +11,8 @@
     "typecheck": "tsc && tsc -p tsconfig.node.json",
     "capture": "node tools/capture.mjs",
     "trace:report": "node tools/trace-report.mjs",
-    "handling": "node tools/handling.mjs"
+    "handling": "node tools/handling.mjs",
+    "check:key": "node tools/check-no-key.mjs"
   },
   "license": "ISC",
   "packageManager": "pnpm@10.29.3",

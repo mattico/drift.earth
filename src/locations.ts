@@ -7,6 +7,8 @@ export interface Spot {
   bearing: number;
   /** Spawn on the topmost surface (bridges, decks) instead of the lowest nearby street. */
   top?: boolean;
+  /** Spawn on the surface closest to this height (ellipsoidal, m), for streets stacked on a hillside. */
+  height?: number;
 }
 
 // Points sit on drivable streets; spawn snaps to the lowest flat ground nearby
@@ -19,7 +21,8 @@ export const SPOTS: Spot[] = [
   { name: 'Times Square', subtitle: 'New York', lat: 40.75773, lon: -73.98571, bearing: 209 },
   { name: 'Las Vegas Strip', subtitle: 'Las Vegas Blvd at Flamingo', lat: 36.1156, lon: -115.17278, bearing: 0 },
   { name: 'Piccadilly Circus', subtitle: 'London', lat: 51.50995, lon: -0.13475, bearing: 270 },
-  { name: 'Casino Square', subtitle: 'Monte Carlo', lat: 43.7393, lon: 7.428, bearing: 40 },
+  // On the hairpin-strewn hillside the lowest flat ground nearby is another street.
+  { name: 'Casino Square', subtitle: 'Monte Carlo', lat: 43.7399107, lon: 7.4274625, bearing: 218, height: 89.95 },
   { name: 'Embarcadero', subtitle: 'San Francisco', lat: 37.795, lon: -122.39366, bearing: 325 },
   // `top`: every point on this stretch is within 30 m of the Metro C construction pit.
   { name: 'Colosseum', subtitle: 'Rome — Via dei Fori Imperiali', lat: 41.891689, lon: 12.490067, bearing: 121, top: true },

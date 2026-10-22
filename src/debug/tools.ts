@@ -1,11 +1,13 @@
 import { MathUtils, type Matrix4, type Scene, type WebGLRenderer } from 'three';
 import { PHYSICS } from '../config';
+import type { CarSpec } from '../car/cars';
 import type { CarInput, CarPhysics, OverpassDecision } from '../car/physics';
 import type { Collider } from '../world/collider';
 import type { World } from '../world/types';
 import { DebugOverlay, type OverlayLayers } from './overlay';
-import { DebugPanel } from './panel';
+import { DebugPanel, type PanelTab } from './panel';
 import { redact, TraceRecorder, type Trace, type TraceEvent } from './trace';
+import { TuningEditor } from './tuning';
 
 export interface DebugContext {
   physics: CarPhysics;
@@ -15,11 +17,14 @@ export interface DebugContext {
   phase(): string;
   /** The multi-line stats readout (only requested while the panel is open). */
   statsText(): string;
+  /** The Tuning tab changed the car's numbers (see TuningHandlers.apply). */
+  onTuned(spec: CarSpec, path: readonly string[] | null): void;
 }
 
 interface Saved {
   open: boolean;
   layers: OverlayLayers;
+  tab?: PanelTab;
 }
 
 const STORAGE = 'drift.earth:debug';
@@ -36,7 +41,10 @@ export class DebugTools {
   readonly recorder = new TraceRecorder();
   readonly overlay = new DebugOverlay();
   private readonly panel: DebugPanel;
+  /** The Tuning tab: the car's live numbers and presets. */
+  readonly tuning: TuningEditor;
   open = false;
+  tab: PanelTab = 'view';
   layers: OverlayLayers = { ...DEFAULT_LAYERS };
   timeScale = 1;
   private pendingSteps = 0;
@@ -57,9 +65,16 @@ export class DebugTools {
       onSave: () => void this.save(),
       onMark: () => this.mark(),
       onCopyLink: () => void this.copyLink(),
+      onTab: (t) => this.setTab(t),
       onClose: () => this.toggle(false),
     });
+    this.tuning = new TuningEditor(this.panel.tuningHost, {
+      apply: (spec, path) => ctx.onTuned(spec, path),
+      notice: (text) => this.panel.notice(text),
+      event: (kind, data) => this.recorder.event(kind, data),
+    });
     this.load();
+    this.panel.setTab(this.tab);
     this.panel.sync(this.layers, this.timeScale);
     this.panel.show(this.open);
     this.captureConsole();
@@ -107,6 +122,13 @@ export class DebugTools {
     this.open = true;
     this.panel.sync(this.layers, this.timeScale);
     this.panel.show(true);
+  }
+
+  /** Shows the View or Tuning tab. */
+  setTab(tab: PanelTab): void {
+    this.tab = tab;
+    this.panel.setTab(tab);
+    this.persist();
   }
 
   setTimeScale(s: number): void {
@@ -177,19 +199,20 @@ export class DebugTools {
     return `${name}.json`;
   }
 
-  /** Deep link that respawns at the car's current spot, height and heading. */
+  /** Deep link that respawns the same car at its current spot, height and heading. */
   reproLink(): string {
     const p = this.ctx.physics;
     const world = this.ctx.world();
     const bearing = Math.round(MathUtils.euclideanModulo(-p.heading * MathUtils.RAD2DEG, 360));
     const geo = world?.geo(p.pos);
     const base = `${location.origin}${location.pathname}`;
-    if (!geo) return `${base}?practice`;
+    if (!geo) return `${base}?practice&car=${p.car.id}`;
     const q = new URLSearchParams({
       lat: geo.lat.toFixed(7),
       lon: geo.lon.toFixed(7),
       bearing: String(bearing),
       h: (geo.height - (p.pos.y - p.groundY)).toFixed(2),
+      car: p.car.id,
     });
     return `${base}?${q}`;
   }
@@ -232,7 +255,7 @@ export class DebugTools {
     const p = this.ctx.physics;
     p.debugRays = this.open && this.layers.probes;
     this.overlay.update(dt, this.ctx.world(), p, this.layers, this.open);
-    if (this.open) {
+    if (this.open && this.tab === 'view') {
       const r = this.recorder;
       this.panel.setStats(
         `${this.ctx.statsText()}\ntrace ${r.steps} steps (${(r.steps * PHYSICS.dt).toFixed(0)} s)  events ${r.eventList().length}  epoch ${r.epoch}`,
@@ -295,6 +318,7 @@ export class DebugTools {
       world: world?.kind ?? null,
       phase: this.ctx.phase(),
       car: {
+        id: p.car.id,
         pos: p.pos.toArray(),
         heading: p.heading,
         speed: p.speed,
@@ -305,6 +329,9 @@ export class DebugTools {
       epoch: this.recorder.epoch,
       capacitySteps: this.recorder.capacity,
       physics: { ...PHYSICS },
+      // The numbers the car was driving on (tuning included), and the preset they came from.
+      carSpec: p.car,
+      preset: this.tuning.describe(),
       layers: this.layers,
       timeScale: this.timeScale,
     };
@@ -345,6 +372,7 @@ export class DebugTools {
       if (saved) {
         this.open = !!saved.open;
         this.layers = { ...DEFAULT_LAYERS, ...saved.layers };
+        if (saved.tab === 'view' || saved.tab === 'tuning') this.tab = saved.tab;
       }
     } catch {
       // Defaults.
@@ -353,7 +381,7 @@ export class DebugTools {
 
   private persist(): void {
     try {
-      localStorage.setItem(STORAGE, JSON.stringify({ open: this.open, layers: this.layers } satisfies Saved));
+      localStorage.setItem(STORAGE, JSON.stringify({ open: this.open, layers: this.layers, tab: this.tab } satisfies Saved));
     } catch {
       // Not persisted.
     }

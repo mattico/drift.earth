@@ -221,7 +221,7 @@ export interface WheelSample {
   sliding: number; // 0..1 how hard the tyre is sliding
 }
 
-/** Skid marks + tyre smoke for the rear wheels. */
+/** Skid marks + tyre smoke, one trail per wheel (rear pair, then front). */
 export class TyreEffects {
   readonly root = new Group();
   private readonly trails: SkidTrail[];
@@ -235,10 +235,10 @@ export class TyreEffects {
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   });
-  private smokeAcc = [0, 0];
+  private smokeAcc = [0, 0, 0, 0];
 
   constructor() {
-    this.trails = [new SkidTrail(this.skidMat), new SkidTrail(this.skidMat)];
+    this.trails = this.smokeAcc.map(() => new SkidTrail(this.skidMat));
     for (const t of this.trails) this.root.add(t.mesh);
     this.root.add(this.smoke.points);
   }
@@ -271,7 +271,7 @@ export class TyreEffects {
   clear(): void {
     for (const t of this.trails) t.clear();
     this.smoke.clear();
-    this.smokeAcc = [0, 0];
+    this.smokeAcc.fill(0);
   }
 
   applyMatrix(m: Matrix4): void {

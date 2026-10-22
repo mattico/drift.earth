@@ -11,9 +11,10 @@ import {
 import { CarAudio } from './audio';
 import { ChaseCamera, wrapAngle } from './camera';
 import { CarModel } from './car/carModel';
+import { CARS, DEFAULT_CAR, type CarId, type CarSpec } from './car/cars';
 import { TyreEffects, type WheelSample } from './car/effects';
 import { CarPhysics, type CarInput } from './car/physics';
-import { CAMERA, DRIVETRAIN, PHYSICS, SCORING } from './config';
+import { CAMERA, PHYSICS, SCORING } from './config';
 import { DebugTools } from './debug/tools';
 import { InputManager, type Actions, type InputDevice } from './input';
 import { Minimap } from './minimap';
@@ -43,6 +44,8 @@ const LOCATE_START_HEIGHT = 6000;
 const LOCATE_MAX_SETTLE = 3;
 /** Tiles coarser than this (metres of geometric error) can be far off the real surface. */
 const FINE_TILE_ERROR = 1000;
+/** localStorage key for the free camera's auto re-centre (R3). */
+const RECENTER_STORAGE = 'drift.earth:recenter';
 
 /** Exact spawn for deep links and repro links. */
 export interface SpawnOptions {
@@ -67,7 +70,7 @@ export class Game {
   readonly renderer: WebGLRenderer;
   private readonly scene = new Scene();
   private readonly chase: ChaseCamera;
-  private readonly car = new CarModel();
+  private car = new CarModel(CARS[DEFAULT_CAR]);
   private readonly effects = new TyreEffects();
   private readonly physics: CarPhysics;
   readonly debug: DebugTools;
@@ -146,11 +149,20 @@ export class Game {
         collider: () => this.collider,
         phase: () => this.phase,
         statsText: () => this.debugText(),
+        onTuned: (spec, path) => this.onTuned(spec, path),
       },
       this.scene,
     );
+    // The car drives on a working copy of its active preset, never the stock spec.
+    this.physics.setCar(this.debug.tuning.load(DEFAULT_CAR));
+    this.applyCar();
     this.score.onBank = (pts) => this.hud.toast(`+${pts.toLocaleString('en-US')}`, 'good');
     this.score.onFail = (lost) => this.hud.toast(`Crashed! −${lost.toLocaleString('en-US')}`, 'bad');
+    try {
+      this.chase.recenter = localStorage.getItem(RECENTER_STORAGE) !== '0';
+    } catch {
+      // Storage blocked: the default (re-centre).
+    }
 
     this.input = new InputManager(document.getElementById('touch')!);
     this.input.onPadConnected = (_name, supported) =>
@@ -238,6 +250,76 @@ export class Game {
     this.audio.start();
   }
 
+  /** Whether the free camera eases back behind the car (R3 toggles it); remembered between visits. */
+  setRecenter(on: boolean): void {
+    this.chase.recenter = on;
+    try {
+      localStorage.setItem(RECENTER_STORAGE, on ? '1' : '0');
+    } catch {
+      // Storage blocked: for this visit only.
+    }
+    this.hud.toast(on ? 'Camera re-centres' : 'Camera stays put', 'good');
+  }
+
+  get carId(): CarId {
+    return this.physics.car.id;
+  }
+
+  /** Switches cars; mid-drive, the new one takes over where the old one stood. */
+  setCar(id: CarId): void {
+    if (id === this.physics.car.id) return;
+    const P = this.physics;
+    const visible = this.car.root.visible;
+    this.car.dispose();
+    // The body is the stock car's; the numbers are its active preset's.
+    this.car = new CarModel(CARS[id]);
+    this.car.root.visible = visible;
+    this.scene.add(this.car.root);
+    P.setCar(this.debug.tuning.load(id));
+    P.halt();
+    this.effects.liftAll();
+    this.applyCar();
+    // Paused, nothing else poses the new model or the gearbox display until resume.
+    this.steerShown = 0;
+    this.car.update({ x: P.pos.x, y: P.pos.y, z: P.pos.z, heading: P.heading, pitch: P.pitch, roll: P.roll, steer: 0, vForward: 0, braking: false, reversing: false }, 1);
+    const box = P.drivetrain;
+    this.hud.setDrive({ rpm: box.rpm, gear: box.gear, mode: box.mode, limiting: false });
+    this.debug.event('car', { id });
+  }
+
+  /** Points the camera, HUD (unless `tach` is false: it hasn't changed) and sound at the current car. */
+  private applyCar(tach = true): void {
+    const car = this.physics.car;
+    this.chase.topSpeed = car.chassis.topSpeed;
+    if (tach) this.hud.setDrivetrain(car.drivetrain);
+    this.audio.setCar(car.id, car.drivetrain);
+  }
+
+  /**
+   * The Tuning tab changed the car mid-drive. Most fields are read from the spec
+   * every step, so an edit in place just works; the probe corners are built by
+   * setCar, and a new spec (a preset loaded) needs setCar and a gear to suit
+   * the speed.
+   */
+  private onTuned(spec: CarSpec, path: readonly string[] | null): void {
+    const P = this.physics;
+    const box = P.drivetrain;
+    if (path === null) {
+      P.setCar(spec);
+      if (box.gear < 0) P.drivetrain.gear = -1;
+      else P.drivetrain.matchSpeed(Math.max(0, P.vForward));
+    } else if (path[0] === 'chassis' && (path[1] === 'cornerX' || path[1] === 'cornerZ')) {
+      // Same drivetrain spec object: keep the gearbox's state.
+      P.setCar(spec);
+      P.drivetrain = box;
+    }
+    // One gear fewer while in the top one.
+    const D = P.drivetrain.spec;
+    if (P.drivetrain.gear > D.gears.length) P.drivetrain.gear = D.gears.length;
+    const tach = path === null || (path[0] === 'drivetrain' && ['redline', 'limiter', 'gears'].includes(path[1]));
+    this.applyCar(tach);
+  }
+
   pause(): void {
     if (this.phase !== 'driving') return;
     this.phase = 'paused';
@@ -301,7 +383,8 @@ export class Game {
         this.pause();
       } else {
         if (actions.reset) this.resetToCrumb(3);
-        if (actions.cameraCycle) this.chase.cyclePitch(actions.cameraCycle);
+        if (actions.cameraCycle) this.chase.cyclePitch(actions.cameraCycle, actions.cameraWrap);
+        if (actions.cameraRecenter) this.setRecenter(!this.chase.recenter);
         this.chase.look(actions.look.x, actions.look.y, dt);
         const box = this.physics.drivetrain;
         if (actions.shiftUp) box.shiftUp();
@@ -521,14 +604,15 @@ export class Game {
     this.audio.update(
       {
         rpm: box.rpm,
-        redline: DRIVETRAIN.redline,
+        redline: box.spec.redline,
         throttle: box.throttle,
         limiting: box.limiting,
         shifting: box.shifting,
         gear: box.gear,
         engaged: box.engaged,
+        boost: box.boost,
         speed: P.speed,
-        wheelSpin: Math.max(0, Math.abs(P.wheelSpeed) - Math.abs(P.vForward)),
+        wheelSpin: P.wheelSpin,
         slideF: P.tyre.slideF,
         slideR: P.tyre.slideR,
         airborne: P.airborne,
@@ -547,12 +631,19 @@ export class Game {
     const P = this.physics;
     const sinH = Math.sin(heading);
     const cosH = Math.cos(heading);
-    // Smoke follows how fast the rear tyres slide over the road: drifts, burnouts and lock-ups.
-    const slideAmount = P.airborne ? 0 : Math.max(0, P.tyre.slideR - 1.5) / 6 + (handbrake && P.speed > 3 ? 0.2 : 0);
-    const wheels: WheelSample[] = CarModel.rearWheels.map(([cx, cz]) => ({
-      point: new Vector3(x + cx * cosH + cz * sinH, P.groundY + 0.03, z - cx * sinH + cz * cosH),
-      sliding: Math.min(1, slideAmount),
-    }));
+    // Smoke follows how fast each axle's tyres slide over the road: drifts,
+    // burnouts and lock-ups. A front-drive car's fronts mark under real
+    // wheelspin or understeer, not the scrub of a steered drift.
+    const rear = P.airborne ? 0 : Math.max(0, P.tyre.slideR - 1.5) / 6 + (handbrake && P.speed > 3 ? 0.2 : 0);
+    const front = P.airborne || P.car.drive !== 'fwd' ? 0 : Math.max(0, P.tyre.slideF - 4) / 6;
+    // On the plane of the road, or on a hill one axle's marks sink under it.
+    const n = P.groundNormal;
+    const sample = ([cx, cz]: readonly [number, number], sliding: number): WheelSample => {
+      const ox = cx * cosH + cz * sinH;
+      const oz = -cx * sinH + cz * cosH;
+      return { point: new Vector3(x + ox, P.groundY + 0.03 - (n.x * ox + n.z * oz) / n.y, z + oz), sliding: Math.min(1, sliding) };
+    };
+    const wheels = [...this.car.rearWheels.map((w) => sample(w, rear)), ...this.car.frontWheels.map((w) => sample(w, front))];
     const speed = P.speed;
     const dir = speed > 0.1 ? new Vector3(P.vel.x / speed, 0, P.vel.z / speed) : P.forward;
     const cam = this.chase.camera;

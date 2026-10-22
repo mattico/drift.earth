@@ -1,5 +1,5 @@
-import type { ShiftMode } from './car/drivetrain';
-import { DRIVETRAIN } from './config';
+import { CAR_IDS, CARS, type CarId, type CarSpec, type DrivetrainSpec } from './car/cars';
+import { powerHp, type ShiftMode } from './car/drivetrain';
 import type { InputDevice } from './input';
 import { parseCoordinates, SPOTS, type Spot } from './locations';
 import { PlaceSearch } from './places';
@@ -11,10 +11,24 @@ const fmt = new Intl.NumberFormat('en-US');
 
 const PAD_HINTS =
   '<b>RT/LT</b> gas · brake/reverse &nbsp; <b>L stick</b> steer &nbsp; <b>A</b> handbrake &nbsp; <b>LB/RB</b> shift (manual) &nbsp; <b>View</b> auto<br />' +
-  '<b>R stick</b> look around &nbsp; <b>D-pad ◀▶</b> camera angle &nbsp; <b>▲▼</b> zoom &nbsp; <b>Y</b> reset &nbsp; <b>Menu</b> pause';
+  '<b>R stick</b> look around (<b>R3</b> auto re-centre on/off) &nbsp; <b>D-pad ◀▶</b> camera angle &nbsp; <b>▲▼</b> zoom &nbsp; <b>Y</b> reset &nbsp; <b>Menu</b> pause';
 
 /** m/s → mph, for everything the game displays. */
 export const MPH = 2.236936;
+
+/**
+ * The car picker's spec line, e.g. "RWD · 395 hp · 7,250 rpm redline". Worked
+ * out from the drivetrain, so it can't drift from the numbers the car drives on.
+ */
+function carSpecLine(car: CarSpec): string {
+  const D = car.drivetrain;
+  const lo = D.torque[0][0];
+  const hi = D.torque[D.torque.length - 1][0];
+  // Power peaks inside a segment of the torque curve, not only at its points.
+  let hp = powerHp(D, hi);
+  for (let rpm = lo; rpm < hi; rpm += 25) hp = Math.max(hp, powerHp(D, rpm));
+  return `${car.drive.toUpperCase()} · ${Math.round(hp)} hp · ${fmt.format(D.redline)} rpm redline`;
+}
 
 export interface DriveDisplay {
   rpm: number;
@@ -23,12 +37,11 @@ export interface DriveDisplay {
   limiting: boolean;
 }
 
-// Tach geometry: 0…TACH_MAX rpm over a 270° sweep, 0 at lower left.
-const TACH_MAX = 9000;
+// Tach geometry: 0…max rpm (the limiter rounded up to the next 1000) over a
+// 270° sweep, 0 at lower left.
 const TACH_START = -135;
 const TACH_SWEEP = 270;
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const tachAngle = (rpm: number) => TACH_START + (TACH_SWEEP * Math.min(rpm, TACH_MAX + 200)) / TACH_MAX;
 const polar = (r: number, deg: number): [number, number] => {
   const a = (deg * Math.PI) / 180;
   return [100 + r * Math.sin(a), 100 - r * Math.cos(a)];
@@ -64,16 +77,28 @@ export class Hud {
   private lastStatus = '';
   private lastGear = NaN;
   private lastMode = '';
+  private redline = 0;
+  private tachMax = 1;
 
-  constructor() {
+  /** Rebuilds the tach and gear selector for a car's engine and gearbox. */
+  setDrivetrain(d: DrivetrainSpec): void {
+    this.redline = d.redline;
+    this.tachMax = Math.ceil((d.limiter + 1) / 1000) * 1000;
     this.buildTach();
     const gears = $('gb-gears');
-    for (const g of [...DRIVETRAIN.gears.map((_, i) => DRIVETRAIN.gears.length - i), -1]) {
+    gears.replaceChildren();
+    this.gearEls.clear();
+    for (const g of [...d.gears.map((_, i) => d.gears.length - i), -1]) {
       const el = document.createElement('span');
       el.textContent = g < 0 ? 'R' : String(g);
       gears.append(el);
       this.gearEls.set(g, el);
     }
+    this.lastGear = NaN;
+  }
+
+  private tachAngle(rpm: number): number {
+    return TACH_START + (TACH_SWEEP * Math.min(rpm, this.tachMax + 200)) / this.tachMax;
   }
 
   /** Wires the gear selector's buttons (mode toggle, and ▼▲ on touch screens). */
@@ -92,8 +117,8 @@ export class Hud {
   }
 
   setDrive(d: DriveDisplay): void {
-    this.needle.setAttribute('transform', `rotate(${tachAngle(d.rpm).toFixed(1)} 100 100)`);
-    this.tach.classList.toggle('shift', d.mode === 'manual' && d.rpm > DRIVETRAIN.redline - 500);
+    this.needle.setAttribute('transform', `rotate(${this.tachAngle(d.rpm).toFixed(1)} 100 100)`);
+    this.tach.classList.toggle('shift', d.mode === 'manual' && d.rpm > this.redline - 500);
     this.tach.classList.toggle('limit', d.limiting);
     if (d.gear !== this.lastGear) {
       this.gearEls.get(this.lastGear)?.classList.remove('on');
@@ -110,6 +135,9 @@ export class Hud {
 
   private buildTach(): void {
     const svg = $('tach-dial') as unknown as SVGSVGElement;
+    svg.replaceChildren();
+    const tachAngle = (rpm: number) => this.tachAngle(rpm);
+    const max = this.tachMax;
     const el = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>) => {
       const e = document.createElementNS(SVG_NS, tag);
       for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
@@ -122,13 +150,13 @@ export class Hud {
       const large = tachAngle(to) - tachAngle(from) > 180 ? 1 : 0;
       return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
     };
-    el('path', { d: arc(88, 0, TACH_MAX), class: 'tach-ring' });
-    el('path', { d: arc(88, DRIVETRAIN.redline, TACH_MAX), class: 'tach-red' });
-    for (let rpm = 0; rpm <= TACH_MAX; rpm += 500) {
+    el('path', { d: arc(88, 0, max), class: 'tach-ring' });
+    el('path', { d: arc(88, this.redline, max), class: 'tach-red' });
+    for (let rpm = 0; rpm <= max; rpm += 500) {
       const major = rpm % 1000 === 0;
       const [x0, y0] = polar(major ? 74 : 79, tachAngle(rpm));
       const [x1, y1] = polar(84, tachAngle(rpm));
-      el('line', { x1: x0, y1: y0, x2: x1, y2: y1, class: rpm >= DRIVETRAIN.redline ? 'tach-tick red' : 'tach-tick' });
+      el('line', { x1: x0, y1: y0, x2: x1, y2: y1, class: rpm >= this.redline ? 'tach-tick red' : 'tach-tick' });
       if (major) {
         const [tx, ty] = polar(60, tachAngle(rpm));
         el('text', { x: tx, y: ty + 4.5, class: 'tach-num' }).textContent = String(rpm / 1000);
@@ -208,12 +236,13 @@ export class Hud {
 }
 
 export interface MenuHandlers {
-  onPlace(lat: number, lon: number, bearing: number, name: string, top?: boolean): void;
+  onPlace(lat: number, lon: number, bearing: number, name: string, top?: boolean, height?: number): void;
   onPractice(): void;
   onResume(): void;
   onRespawn(): void;
   onKey(key: string): void;
   onDebug(): void;
+  onCar(id: CarId): void;
 }
 
 export class Menu {
@@ -227,6 +256,7 @@ export class Menu {
   private readonly keyRow = $('key-row');
   private readonly keyInput = $<HTMLInputElement>('api-key');
   private readonly resumeRow = $('resume-row');
+  private readonly carButtons = new Map<CarId, HTMLButtonElement>();
   private device: InputDevice | null = null;
   private places: PlaceSearch | null = null;
   private pending: AbortController | null = null;
@@ -247,8 +277,11 @@ export class Menu {
       onRespawn: bump(handlers.onRespawn),
       onKey: handlers.onKey,
       onDebug: handlers.onDebug,
+      onCar: handlers.onCar,
     };
     this.h = h;
+    const cars = $('cars');
+    for (const id of CAR_IDS) cars.append(this.carButton(CARS[id]));
     const spots = $('spots');
     for (const s of SPOTS) spots.append(this.spotButton(s));
     $('practice').addEventListener('click', () => h.onPractice());
@@ -275,6 +308,11 @@ export class Menu {
     this.search.placeholder = key
       ? 'Search a place, or paste “lat, lng” / a Google Maps link'
       : 'Paste “lat, lng” or a Google Maps link';
+  }
+
+  /** Marks the car the game is using in the picker. */
+  setCar(id: CarId): void {
+    for (const [car, b] of this.carButtons) b.setAttribute('aria-pressed', String(car === id));
   }
 
   show(paused: boolean): void {
@@ -311,7 +349,18 @@ export class Menu {
       const along = dir.x ? dx * dir.x : dy * dir.y;
       const across = Math.abs(dir.x ? dy : dx);
       if (along <= 1) continue;
-      const score = along + 2 * across;
+      // Only what lies wholly beyond the current control's edge: right of a half-width
+      // card is the card beside it, not the full-width search box below.
+      const ahead =
+        dir.x > 0 ? r.left - from.right : dir.x < 0 ? from.left - r.right : dir.y > 0 ? r.top - from.bottom : from.top - r.bottom;
+      if (ahead < -4) continue;
+      // Off-axis distance counts mostly as the gap between the edges (0 when they
+      // overlap), so a wide card straight below Resume beats a narrow spot further
+      // down whose centre happens to line up; centres only break near-ties.
+      const gap = dir.x
+        ? Math.max(0, r.top - from.bottom, from.top - r.bottom)
+        : Math.max(0, r.left - from.right, from.left - r.right);
+      const score = along + 2 * gap + 0.5 * across;
       if (score < bestScore) {
         bestScore = score;
         best = el;
@@ -372,7 +421,21 @@ export class Menu {
     b.innerHTML = `<b></b><span></span>`;
     b.querySelector('b')!.textContent = s.name;
     b.querySelector('span')!.textContent = s.subtitle;
-    b.addEventListener('click', () => this.h.onPlace(s.lat, s.lon, s.bearing, s.name, s.top));
+    b.addEventListener('click', () => this.h.onPlace(s.lat, s.lon, s.bearing, s.name, s.top, s.height));
+    return b;
+  }
+
+  private carButton(car: CarSpec): HTMLButtonElement {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'car';
+    b.setAttribute('aria-pressed', 'false');
+    b.innerHTML = `<b></b><span class="car-spec"></span><span class="car-blurb"></span>`;
+    b.querySelector('b')!.textContent = car.name;
+    b.querySelector('.car-spec')!.textContent = carSpecLine(car);
+    b.querySelector('.car-blurb')!.textContent = car.blurb;
+    b.addEventListener('click', () => this.h.onCar(car.id));
+    this.carButtons.set(car.id, b);
     return b;
   }
 

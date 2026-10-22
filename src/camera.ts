@@ -1,5 +1,5 @@
 import { MathUtils, PerspectiveCamera, Vector3, type Matrix4 } from 'three';
-import { CAMERA as C, PHYSICS } from './config';
+import { CAMERA as C } from './config';
 
 const _back = new Vector3();
 
@@ -14,10 +14,14 @@ export class ChaseCamera {
   distance: number = C.distance;
   pitch: number = C.pitchPresets[0];
   zoom = 1;
+  /** The car's top speed (m/s): the camera pulls back and tilts toward it. */
+  topSpeed = 50;
   pitchPreset = 0;
   /** Free camera: orbit and tilt on top of the chase view, easing back once let go. */
   orbitYaw = 0;
   orbitPitch = 0;
+  /** Let go of the stick and the free camera eases back behind the car; off, it stays where it was left. */
+  recenter = true;
   private orbitIdle = Infinity;
   private shake = 0;
 
@@ -25,10 +29,10 @@ export class ChaseCamera {
     this.camera = new PerspectiveCamera(C.fov, aspect, 1, 6000);
   }
 
-  /** Steps through the pitch presets (`dir` +1 next, −1 previous), wrapping. */
-  cyclePitch(dir = 1): void {
+  /** Steps through the pitch presets (`dir` +1 next, −1 previous), wrapping round or stopping at either end. */
+  cyclePitch(dir = 1, wrap = true): void {
     const n = C.pitchPresets.length;
-    this.pitchPreset = (this.pitchPreset + dir + n) % n;
+    this.pitchPreset = wrap ? (this.pitchPreset + dir + n) % n : MathUtils.clamp(this.pitchPreset + dir, 0, n - 1);
   }
 
   /**
@@ -42,7 +46,7 @@ export class ChaseCamera {
       this.orbitPitch += y * C.orbitTiltRate * dt;
     } else {
       this.orbitIdle += dt;
-      if (this.orbitIdle > C.orbitHold) {
+      if (this.recenter && this.orbitIdle > C.orbitHold) {
         const k = 1 - Math.exp(-dt / C.orbitReturnTau);
         this.orbitYaw -= this.orbitYaw * k;
         this.orbitPitch -= this.orbitPitch * k;
@@ -86,7 +90,7 @@ export class ChaseCamera {
     const yawTarget = Math.atan2(-bx, -bz);
     this.yaw += wrapAngle(yawTarget - this.yaw) * (1 - Math.exp(-dt / C.yawTau));
 
-    const speedT = Math.min(1, speed / PHYSICS.topSpeed);
+    const speedT = Math.min(1, speed / this.topSpeed);
     const dTarget = Math.min(C.maxDistance, C.distance + C.distancePerSpeed * speed) * this.zoom;
     this.distance += (dTarget - this.distance) * (1 - Math.exp(-dt / C.distanceTau));
     const pTarget = Math.min(MathUtils.degToRad(85), C.pitchPresets[this.pitchPreset] + C.pitchSpeedBonus * speedT);

@@ -1,9 +1,24 @@
 import './style.css';
+import { type CarId, DEFAULT_CAR, isCarId } from './car/cars';
 import { Game, type SpawnOptions } from './game';
 import { SPOTS } from './locations';
 import { Hud, Menu } from './ui';
 
 const KEY_STORAGE = 'drift.earth:key';
+const CAR_STORAGE = 'drift.earth:car';
+
+/** ?car= wins (a shared or repro link names its car), then the last pick in the menu. */
+function readCar(): CarId {
+  const linked = linkedCar();
+  if (linked) return linked;
+  try {
+    const saved = localStorage.getItem(CAR_STORAGE);
+    if (isCarId(saved)) return saved;
+  } catch {
+    // Storage blocked: the default car.
+  }
+  return DEFAULT_CAR;
+}
 
 function readKey(): string | null {
   const env = (import.meta.env.MAPS_API_KEY ?? import.meta.env.VITE_GOOGLE_MAPS_KEY) as string | undefined;
@@ -13,6 +28,12 @@ function readKey(): string | null {
   } catch {
     return null;
   }
+}
+
+/** The page's ?car=, if any: a new run's link keeps it (it was never saved, unlike a menu pick). */
+function linkedCar(): CarId | null {
+  const car = new URLSearchParams(location.search).get('car');
+  return isCarId(car) ? car : null;
 }
 
 let apiKey = readKey();
@@ -46,7 +67,7 @@ const game = new Game(document.getElementById('view') as HTMLCanvasElement, hud,
 });
 
 const menu = new Menu({
-  onPlace(lat, lon, bearing, name, top = false) {
+  onPlace(lat, lon, bearing, name, top = false, height) {
     if (!apiKey) {
       menu.showError('Add a Google Maps Platform API key with the Map Tiles API enabled first.');
       return;
@@ -56,14 +77,18 @@ const menu = new Menu({
     const url = new URL(location.href);
     const q = new URLSearchParams({ lat: lat.toFixed(6), lon: lon.toFixed(6), bearing: String(Math.round(bearing)) });
     if (top) q.set('top', '1');
+    if (height !== undefined) q.set('h', String(height));
+    const car = linkedCar();
+    if (car) q.set('car', car);
     url.search = q.toString();
     history.replaceState(null, '', url);
-    game.startTiles(apiKey, lat, lon, bearing, name, top);
+    game.startTiles(apiKey, lat, lon, bearing, name, top, { height });
   },
   onPractice() {
     menu.showError(null);
     menu.hide();
-    history.replaceState(null, '', `${location.pathname}?practice`);
+    const car = linkedCar();
+    history.replaceState(null, '', `${location.pathname}?practice${car ? `&car=${car}` : ''}`);
     game.startPractice();
   },
   onResume() {
@@ -86,8 +111,28 @@ const menu = new Menu({
   onDebug() {
     game.debug.toggle();
   },
+  onCar(id) {
+    // Paused, the new car takes the old one's place, stopped; before a run it's just the one you'll drive.
+    game.setCar(id);
+    menu.setCar(id);
+    try {
+      localStorage.setItem(CAR_STORAGE, id);
+    } catch {
+      // Not persisted; still this session's car.
+    }
+    // A ?car= link would override the pick on reload. (Edited by hand: URLSearchParams
+    // would turn a bare ?practice into ?practice=.)
+    if (linkedCar()) {
+      const rest = location.search.slice(1).split('&').filter((kv) => kv.split('=')[0] !== 'car');
+      history.replaceState(null, '', `${location.pathname}${rest.length ? `?${rest.join('&')}` : ''}${location.hash}`);
+    }
+  },
 });
 menu.setApiKey(apiKey);
+// Before anything is driven, so the first run is in the chosen car.
+const startCar = readCar();
+game.setCar(startCar);
+menu.setCar(startCar);
 
 window.addEventListener('keydown', (e) => {
   // Ignore auto-repeat: holding Esc would pause and immediately resume.
@@ -98,7 +143,8 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Deep links: ?lat=..&lon=..&bearing=..[&top=1][&h=..][&mph=..|&kmh=..] or ?practice.
+// Deep links: ?lat=..&lon=..&bearing=..[&top=1][&h=..][&mph=..|&kmh=..] or ?practice,
+// either with [&car=hatch|muscle].
 // With no link, drop straight into the default spot; Esc opens the menu.
 // ?debug[=wire,probes,…] opens the debug panel.
 const params = new URLSearchParams(location.search);
@@ -127,7 +173,7 @@ if (params.has('practice')) {
 } else if (apiKey) {
   const home = SPOTS[0];
   menu.hide();
-  game.startTiles(apiKey, home.lat, home.lon, home.bearing, home.name, home.top);
+  game.startTiles(apiKey, home.lat, home.lon, home.bearing, home.name, home.top, { height: home.height });
 }
 
 // Exposed for debugging and automated runs; `__drift.debug` is the trace and

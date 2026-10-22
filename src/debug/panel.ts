@@ -7,8 +7,16 @@ export interface PanelHandlers {
   onSave(): void;
   onMark(): void;
   onCopyLink(): void;
+  onTab(tab: PanelTab): void;
   onClose(): void;
 }
+
+/** The overlay and trace controls, or the car's tuning (debug/tuning.ts). */
+export type PanelTab = 'view' | 'tuning';
+const TABS: Array<[PanelTab, string, string]> = [
+  ['view', 'View', 'Overlay, time and trace controls'],
+  ['tuning', 'Tuning', 'The car’s chassis and drivetrain numbers, and presets'],
+];
 
 const FILLS: FillMode[] = ['off', 'height', 'slope'];
 const SCALES: Array<[number, string]> = [
@@ -28,6 +36,9 @@ export class DebugPanel {
   private readonly noticeEl = document.createElement('div');
   private readonly toggles = new Map<keyof OverlayLayers, HTMLButtonElement>();
   private readonly scaleButtons: HTMLButtonElement[] = [];
+  private readonly tabButtons = new Map<PanelTab, HTMLButtonElement>();
+  /** Where the Tuning tab's editor builds itself. */
+  readonly tuningHost = document.createElement('div');
   private fill = document.createElement('button');
   private layers: OverlayLayers | null = null;
   private noticeTimer = 0;
@@ -37,11 +48,22 @@ export class DebugPanel {
     root.className = 'panel debug-panel';
     root.hidden = true;
     root.innerHTML = `
-      <div class="dbg-head"><b>Debug</b><span>F3 panel · F8 mark · F9 save trace</span><button class="dbg-close" type="button" aria-label="Close">×</button></div>
-      <div class="dbg-row" data-row="view"><span class="dbg-label">View</span></div>
-      <div class="dbg-row" data-row="time"><span class="dbg-label">Time</span></div>
-      <div class="dbg-row" data-row="trace"><span class="dbg-label">Trace</span></div>
-      <details class="dbg-legend"><summary>Legend</summary><div class="dbg-legend-body"></div></details>`;
+      <div class="dbg-head"><b>Debug</b><span class="dbg-tabs"></span><span>F3 · F8 mark · F9 save trace</span><button class="dbg-close" type="button" aria-label="Close">×</button></div>
+      <div class="dbg-page" data-page="view">
+        <div class="dbg-row" data-row="view"><span class="dbg-label">View</span></div>
+        <div class="dbg-row" data-row="time"><span class="dbg-label">Time</span></div>
+        <div class="dbg-row" data-row="trace"><span class="dbg-label">Trace</span></div>
+        <details class="dbg-legend"><summary>Legend</summary><div class="dbg-legend-body"></div></details>
+      </div>
+      <div class="dbg-page" data-page="tuning"></div>`;
+    const tabs = root.querySelector('.dbg-tabs')!;
+    for (const [tab, label, title] of TABS) {
+      const b = this.button(label, title, () => this.h.onTab(tab));
+      b.classList.add('dbg-tab');
+      this.tabButtons.set(tab, b);
+      tabs.append(b);
+    }
+    root.querySelector('[data-page="tuning"]')!.append(this.tuningHost);
     const row = (name: string) => root.querySelector<HTMLElement>(`[data-row="${name}"]`)!;
 
     const view = row('view');
@@ -83,7 +105,7 @@ export class DebugPanel {
     root.querySelector('.dbg-close')!.addEventListener('click', () => this.h.onClose());
     root.querySelector('.dbg-legend-body')!.innerHTML = legend();
     this.stats.className = 'dbg-stats';
-    root.append(this.stats);
+    root.querySelector('[data-page="view"]')!.append(this.stats);
 
     this.noticeEl.className = 'debug-notice';
     this.noticeEl.hidden = true;
@@ -92,6 +114,13 @@ export class DebugPanel {
 
   show(open: boolean): void {
     this.root.hidden = !open;
+  }
+
+  setTab(tab: PanelTab): void {
+    for (const [t, b] of this.tabButtons) b.classList.toggle('on', t === tab);
+    // The tuning form wants a little more room for its sliders and number boxes.
+    this.root.classList.toggle('dbg-wide', tab === 'tuning');
+    for (const page of this.root.querySelectorAll<HTMLElement>('.dbg-page')) page.hidden = page.dataset.page !== tab;
   }
 
   sync(layers: OverlayLayers, timeScale: number): void {
