@@ -144,13 +144,19 @@ export const PHYSICS = {
   // nearer at the top, and one must face downward.
   portalMaxCover: 14,
   portalMinClearance: 5,
+  // …and that median at most portalLidRise above the cover at the face: a
+  // tunnel's lid runs on at about the portal's height (measured within 1 m at
+  // Lowry Hill and Lyndale), a building's cover jumps from an overhang to its
+  // roof (+10 m at a Loring Park building).
+  portalLidRise: 3,
   portalLean: 0.6,
   portalLeanNy: -0.35,
   // Inside a tunnel the road is missing, so the car runs on a virtual road:
   // keeping its clearance under the cover, ramping to meet the exit road once a
   // scan ahead finds it, and never steeper than tunnelMaxGrade.
   tunnelMaxGrade: 0.08,
-  tunnelEntryGrace: 20, // metres past the portal where every face is still its curtain
+  tunnelEntryGrace: 20, // metres past the portal where a face is still its curtain…
+  tunnelGraceCover: 4, // …if the cover beyond it is within this above the portal's clearance
   tunnelExitTol: 1.2, // exit road within this of the virtual road
   tunnelScanEvery: 8,
   tunnelScanRange: 220,
@@ -159,8 +165,9 @@ export const PHYSICS = {
 };
 
 /**
- * Engine and gearbox. 420 N·m peak at 5000 rpm, 354 hp peak at 7100.
- * Redline speeds: 77, 106, 137, 165, 191, 217 km/h (top speed is drag-limited).
+ * Engine and gearbox. 470 N·m peak at 4500–5000 rpm, about 395 hp from 7500 to
+ * the 8500 redline. Redline speeds: 87, 121, 155, 187, 217, 246 km/h = 54, 75,
+ * 96, 116, 135, 153 mph (top speed is drag-limited).
  */
 export const DRIVETRAIN = {
   mass: 1250,
@@ -170,8 +177,8 @@ export const DRIVETRAIN = {
   reverse: 3.3,
   efficiency: 0.88,
   idleRpm: 900,
-  redline: 7500,
-  limiter: 7800,
+  redline: 8500,
+  limiter: 8800,
   /** Fuel cut each time the limiter is hit (s). */
   limiterCut: 0.06,
   /** Below this wheel rpm the clutch slips; at full throttle the engine holds launchRpm. */
@@ -189,6 +196,8 @@ export const DRIVETRAIN = {
     [6500, 430],
     [7200, 390],
     [7800, 360],
+    [8500, 330],
+    [8800, 315],
   ] as Array<[number, number]>,
   /** Engine braking torque at redline, scaling with rpm (stronger in lower gears). */
   engineBrakeTorque: 95,
@@ -197,7 +206,7 @@ export const DRIVETRAIN = {
   engineInertia: 0.2,
   shiftTime: 0.14,
   /** Auto box: shift up / down at these rpm, from light to full throttle. */
-  autoUpRpm: [3800, 7200],
+  autoUpRpm: [3800, 8200],
   autoDownRpm: [1600, 4300],
   /** Minimum time between automatic shifts. */
   autoHold: 0.6,
@@ -217,6 +226,12 @@ export const CAMERA = {
   pitchPresets: [34, 46, 58, 70, 82].map((d) => d * (Math.PI / 180)),
   pitchSpeedBonus: 6 * (Math.PI / 180),
   yawTau: 0.35,
+  /** Free camera (right stick): orbit rate, tilt rate (rad/s), lowest tilt, and how long after letting go it eases back, how fast. */
+  orbitRate: 2.6,
+  orbitTiltRate: 1.2,
+  orbitMinPitch: 8 * (Math.PI / 180),
+  orbitHold: 1.5,
+  orbitReturnTau: 0.5,
   targetTau: 0.08,
   distanceTau: 0.6,
   lookAheadTime: 0.35,

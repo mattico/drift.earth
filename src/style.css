@@ -148,6 +148,31 @@ body {
 }
 
 /* Tach + gear selector, bottom right. */
+/* Heading-up road map, bottom left above the attribution. */
+.minimap {
+  position: absolute;
+  left: 16px;
+  bottom: 44px;
+  width: 180px;
+}
+.minimap canvas {
+  display: block;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: #1c1f25;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+.minimap-copy {
+  margin-top: 3px;
+  font-size: 9px;
+  line-height: 1.2;
+  color: rgba(255, 255, 255, 0.7);
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
 .cluster {
   position: absolute;
   right: 16px;
@@ -278,18 +303,6 @@ body {
 .gb-gears span.on {
   color: #fff;
   background: var(--accent);
-}
-.gearbox.refused .gb-gears span.on {
-  background: var(--bad);
-  animation: gb-shake 0.25s;
-}
-@keyframes gb-shake {
-  25% {
-    transform: translateX(-3px);
-  }
-  75% {
-    transform: translateX(3px);
-  }
 }
 /* ▼▲ only where there's no Q/E: touch screens, in manual. */
 .gb-shift {
@@ -696,6 +709,27 @@ input:focus {
   gap: 12px;
   flex-wrap: wrap;
 }
+/* Gamepad: show where focus is, and the buttons that drive it. */
+.pad-hint {
+  display: none;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+body.gamepad .pad-hint {
+  display: inline;
+}
+/* Only when there's a run to go back to. */
+.menu:not(.paused) .pad-resume {
+  display: none;
+}
+body.gamepad .menu :focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+body.gamepad .suggestions li:focus {
+  background: rgba(255, 255, 255, 0.08);
+}
 
 /* ---------- Touch ---------- */
 
@@ -782,6 +816,16 @@ input:focus {
   .hints {
     display: none;
   }
+  /* The touch controls own the bottom corners: the map goes under the score and the ☰ ⟲ buttons. */
+  .minimap {
+    top: 152px;
+    bottom: auto;
+    width: 120px;
+  }
+  .minimap canvas {
+    width: 120px;
+    height: 120px;
+  }
   .cluster {
     bottom: auto;
     top: 16px;
@@ -797,6 +841,16 @@ input:focus {
 @media (max-width: 640px) {
   .hints {
     display: none;
+  }
+  /* The touch controls own the bottom corners: the map goes under the score and the ☰ ⟲ buttons. */
+  .minimap {
+    top: 152px;
+    bottom: auto;
+    width: 120px;
+  }
+  .minimap canvas {
+    width: 120px;
+    height: 120px;
   }
   .cluster {
     bottom: auto;

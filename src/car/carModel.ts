@@ -2,16 +2,18 @@ import {
   AlwaysStencilFunc,
   BoxGeometry,
   CanvasTexture,
+  Color,
   CylinderGeometry,
   GreaterDepth,
+  GreaterStencilFunc,
   Group,
   MathUtils,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  NotEqualStencilFunc,
   PlaneGeometry,
   ReplaceStencilOp,
+  ShaderMaterial,
   type BufferGeometry,
   type Material,
   type Object3D,
@@ -31,6 +33,46 @@ export interface CarPose {
   vForward: number;
   braking: boolean;
   reversing: boolean;
+}
+
+/**
+ * Translucent, rim-lit stand-in for a car part, drawn only where the part is
+ * behind something (GreaterDepth) and only once per pixel (stencil).
+ */
+function ghostMaterial(color: Color): ShaderMaterial {
+  // Dark parts (tyres, glass) still need to read against the scenery.
+  const c = color.clone();
+  c.setRGB(Math.max(c.r, 0.22), Math.max(c.g, 0.22), Math.max(c.b, 0.26));
+  return new ShaderMaterial({
+    uniforms: { color: { value: c } },
+    vertexShader: /* glsl */ `
+      varying vec3 vNormal;
+      varying vec3 vView;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vNormal = normalize(normalMatrix * normal);
+        vView = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 color;
+      varying vec3 vNormal;
+      varying vec3 vView;
+      void main() {
+        float facing = abs(dot(normalize(vNormal), normalize(vView)));
+        float rim = pow(1.0 - facing, 2.0);
+        // Faces toward the camera stay see-through; edges glow.
+        vec3 rgb = mix(color * 1.25, vec3(1.0, 0.95, 0.85), 0.15 + rim * 0.65);
+        gl_FragColor = vec4(rgb, 0.5 + 0.45 * rim);
+      }`,
+    transparent: true,
+    depthFunc: GreaterDepth,
+    depthWrite: false,
+    stencilWrite: true,
+    stencilRef: 1,
+    stencilFunc: GreaterStencilFunc,
+    stencilZPass: ReplaceStencilOp,
+  });
 }
 
 /** Low-poly procedural car. Faces −Z; root yaw = heading, body carries pitch/roll. */
@@ -62,7 +104,7 @@ export class CarModel {
 
     const L = PHYSICS.halfLength * 2;
     const W = PHYSICS.halfWidth * 2;
-    part(new BoxGeometry(W, 0.55, L), paint, 0, 0.6, 0);
+    const shell = part(new BoxGeometry(W, 0.55, L), paint, 0, 0.6, 0);
     part(taperedBox(W * 0.86, 0.48, L * 0.48, 0.78), glass, 0, 1.11, 0.15);
     part(new BoxGeometry(W * 0.8, 0.04, L * 0.3), paint, 0, 1.37, 0.15); // roof
     part(new BoxGeometry(0.35, 0.02, L * 1.001), stripe, 0.22, 0.885, 0);
@@ -95,29 +137,37 @@ export class CarModel {
       if (z < 0) this.frontPivots.push(pivot);
     }
 
-    // X-ray silhouette: drawn where the car fails the depth test (hidden by buildings).
-    // Visible car pixels write stencil 1 so the ghost never shows through the car itself.
+    // X-ray: where something hides the car (a deck overhead, a tunnel, a
+    // building), a translucent copy of it shows through, as if seen through the
+    // geometry. Visible car pixels write stencil 1, so the ghost never shows
+    // through the car itself; each ghost pixel writes 1 too, so overlapping
+    // parts don't stack up into an opaque blob.
     for (const m of [paint, dark, glass, stripe, headMat, rimMat, this.brakeMat, this.reverseMat]) {
       m.stencilWrite = true;
       m.stencilRef = 1;
       m.stencilFunc = AlwaysStencilFunc;
       m.stencilZPass = ReplaceStencilOp;
     }
-    const ghostMat = new MeshBasicMaterial({
-      color: 0xffd23f,
-      transparent: true,
-      opacity: 0.45,
-      depthFunc: GreaterDepth,
-      depthWrite: false,
-      stencilWrite: true,
-      stencilRef: 1,
-      stencilFunc: NotEqualStencilFunc,
+    // After the world: three sorts opaque meshes by material before depth, and
+    // a car drawn first would stamp the stencil before a deck covers it.
+    this.body.traverse((o) => {
+      if ((o as Mesh).isMesh) o.renderOrder = 1;
     });
+    const ghosts = new Map<Material, ShaderMaterial>();
     for (const p of parts) {
-      const ghost = new Mesh(p.geometry, ghostMat);
+      const mat = p.material as MeshStandardMaterial;
+      let g = ghosts.get(mat);
+      if (!g) {
+        g = ghostMaterial(mat.emissive.getHex() && mat.emissiveIntensity > 0.5 ? mat.emissive : mat.color);
+        ghosts.set(mat, g);
+      }
+      const ghost = new Mesh(p.geometry, g);
       ghost.position.copy(p.position);
-      ghost.renderOrder = 10;
-      this.body.add(ghost);
+      // Each pixel goes to the first ghost drawn there, so draw what the chase
+      // camera sees on top first (cabin, roof, stripes, lights), then the
+      // shell. (No tyres: they dip into the road and would glint through it.)
+      ghost.renderOrder = p === shell ? 11 : 10;
+      p.parent!.add(ghost);
     }
 
     // Soft blob shadow; the photogrammetry has no dynamic shadows.

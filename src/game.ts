@@ -15,9 +15,10 @@ import { TyreEffects, type WheelSample } from './car/effects';
 import { CarPhysics, type CarInput } from './car/physics';
 import { CAMERA, DRIVETRAIN, PHYSICS, SCORING } from './config';
 import { DebugTools } from './debug/tools';
-import { InputManager } from './input';
+import { InputManager, type Actions, type InputDevice } from './input';
+import { Minimap } from './minimap';
 import { DriftScore } from './scoring';
-import type { Hud } from './ui';
+import { MPH, type Hud } from './ui';
 import { Collider } from './world/collider';
 import { PracticeWorld } from './world/practiceWorld';
 import { TilesWorld } from './world/tilesWorld';
@@ -58,6 +59,8 @@ export interface GameCallbacks {
   onResume(): void;
   /** Menu requested while not driving (e.g. during the fly-in). */
   onMenu(): void;
+  /** Every frame: gamepad menu navigation (null while the menu can't be open), and the device in use. */
+  onMenuInput(actions: Actions | null, device: InputDevice): void;
 }
 
 export class Game {
@@ -71,6 +74,7 @@ export class Game {
   private readonly score = new DriftScore();
   private readonly audio = new CarAudio();
   private readonly input: InputManager;
+  private readonly minimap = new Minimap();
   private world: World | null = null;
   private collider: Collider | null = null;
   private phase: Phase = 'idle';
@@ -100,6 +104,7 @@ export class Game {
     opts: {} as SpawnOptions,
   };
   private fps = 60;
+  private menuWasOpen = false;
   private steerShown = 0;
 
   constructor(
@@ -128,6 +133,7 @@ export class Game {
       },
       onLand: (v) => {
         if (v > 3) this.chase.addShake(v / 20);
+        this.audio.land(v);
         this.debug.event('land', { v });
       },
       onOverpass: (d) => this.debug.onOverpass(d),
@@ -147,6 +153,8 @@ export class Game {
     this.score.onFail = (lost) => this.hud.toast(`Crashed! −${lost.toLocaleString('en-US')}`, 'bad');
 
     this.input = new InputManager(document.getElementById('touch')!);
+    this.input.onPadConnected = (_name, supported) =>
+      this.hud.toast(supported ? 'Controller connected' : 'Controller not supported in this browser', supported ? 'good' : 'bad');
     this.hud.bindGearbox((kind) => (this.input.shiftQueue[kind] = true));
     // Browsers only allow audio after a gesture; the default spot auto-starts without one.
     const unlock = () => {
@@ -176,6 +184,7 @@ export class Game {
   startTiles(apiKey: string, lat: number, lon: number, bearing: number, name: string, top = false, opts: SpawnOptions = {}): void {
     const world = new TilesWorld({ apiKey, lat, lon, camera: this.chase.camera, renderer: this.renderer });
     this.setWorld(world);
+    this.minimap.setKey(apiKey);
     this.debug.event('start', { lat, lon, bearing, name, top, ...opts });
     this.spawnHeading = -bearing * MathUtils.DEG2RAD;
     this.locate = { t: 0, groundY: null, surfaceY: null, camY: LOCATE_START_HEIGHT, settle: 0, arrivedT: 0, name, top, opts };
@@ -188,6 +197,7 @@ export class Game {
 
   startPractice(): void {
     this.setWorld(new PracticeWorld());
+    this.minimap.setKey(null);
     this.hud.setGoogleBranding(false);
     this.spawnHeading = 0;
     this.spawn(new Vector3(0, 0, 40), 0);
@@ -231,7 +241,7 @@ export class Game {
   pause(): void {
     if (this.phase !== 'driving') return;
     this.phase = 'paused';
-    this.audio.update(0, 0, 0, false);
+    this.audio.silence();
     this.debug.event('pause');
     this.cb.onPause();
   }
@@ -268,6 +278,7 @@ export class Game {
     if (actions.mark) this.debug.mark();
     if (actions.saveTrace) void this.debug.save();
     if (actions.mute) this.audio.toggleMute();
+    this.hud.setDevice(this.input.device);
 
     const world = this.world;
     if (world) {
@@ -290,15 +301,26 @@ export class Game {
         this.pause();
       } else {
         if (actions.reset) this.resetToCrumb(3);
-        if (actions.cameraCycle) this.chase.cyclePitch();
+        if (actions.cameraCycle) this.chase.cyclePitch(actions.cameraCycle);
+        this.chase.look(actions.look.x, actions.look.y, dt);
         const box = this.physics.drivetrain;
         if (actions.shiftUp) box.shiftUp();
-        if (actions.shiftDown) box.shiftDown(this.physics.vForward);
+        if (actions.shiftDown) box.shiftDown();
         if (actions.gearMode) box.toggleMode();
         if (actions.zoom !== 1) this.chase.zoomBy(actions.zoom);
         this.updateDriving(dt, inp);
       }
     }
+    // After the phase handling, so a press that resumes from the menu can't
+    // also act in the game this frame (B is back in the menu, shift up driving).
+    const menuOpen = this.phase === 'idle' || this.phase === 'paused';
+    if (menuOpen && !this.menuWasOpen) {
+      // A direction held while driving (steering, D-pad shifts) mustn't move the menu's focus.
+      this.input.latchNav();
+      actions.nav = null;
+    }
+    this.menuWasOpen = menuOpen;
+    this.cb.onMenuInput(menuOpen ? actions : null, this.input.device);
     const physMs = performance.now() - now;
 
     if (world && this.collider) {
@@ -326,7 +348,7 @@ export class Game {
   private stop(fatal: string | null): void {
     this.debug.event('stop', { fatal });
     this.phase = 'idle';
-    this.audio.update(0, 0, 0, false);
+    this.audio.silence();
     this.hud.showLoading(null);
     this.hud.show(false);
     if (fatal) this.cb.onFatal(fatal);
@@ -492,13 +514,32 @@ export class Game {
     this.updateEffects(dt * scale, x, z, heading, inp.handbrake);
     const renderPos = new Vector3(x, y, z);
     this.chase.follow(dt, renderPos, heading, P.vel, P.drifting);
+    const geo = this.world!.geo(renderPos);
+    // Heading-up: the view's bearing (clockwise from north) points up the map.
+    if (geo) this.minimap.update(dt, geo.lat, geo.lon, -this.chase.viewYaw, -heading, P.speed);
     const box = P.drivetrain;
-    this.audio.update(box.rpm / DRIVETRAIN.redline, inp.throttle, P.airborne ? 0 : Math.min(1, P.tyre.slideR / 8), true, box.limiting);
-    this.hud.setDrive({ rpm: box.rpm, gear: box.gear, mode: box.mode, limiting: box.limiting, refused: box.refused > 0 });
+    this.audio.update(
+      {
+        rpm: box.rpm,
+        redline: DRIVETRAIN.redline,
+        throttle: box.throttle,
+        limiting: box.limiting,
+        shifting: box.shifting,
+        gear: box.gear,
+        engaged: box.engaged,
+        speed: P.speed,
+        wheelSpin: Math.max(0, Math.abs(P.wheelSpeed) - Math.abs(P.vForward)),
+        slideF: P.tyre.slideF,
+        slideR: P.tyre.slideR,
+        airborne: P.airborne,
+      },
+      dt,
+    );
+    this.hud.setDrive({ rpm: box.rpm, gear: box.gear, mode: box.mode, limiting: box.limiting });
 
     // Frozen or slowed physics must not trip the airborne/stuck timers.
     this.trackCrumbs(dt * scale, inp.throttle);
-    this.hud.update(P.speed * 3.6, this.score.state());
+    this.hud.update(P.speed, this.score.state());
     this.hud.setStatus(this.statusText());
   }
 
@@ -599,7 +640,7 @@ export class Game {
   private statusText(): string {
     const P = this.physics;
     if (P.waiting) return 'Loading terrain…';
-    if (this.stuckTime > 3) return matchMedia('(pointer: coarse)').matches ? 'Stuck? Tap ⟲ to reset' : 'Stuck? Press R to reset';
+    if (this.stuckTime > 3) return { touch: 'Stuck? Tap ⟲ to reset', gamepad: 'Stuck? Press Y to reset', keyboard: 'Stuck? Press R to reset' }[this.input.device];
     return '';
   }
 
@@ -609,11 +650,11 @@ export class Game {
     return [
       `fps ${this.fps.toFixed(0)}  phase ${this.phase}`,
       `pos ${P.pos.x.toFixed(1)} ${P.pos.y.toFixed(1)} ${P.pos.z.toFixed(1)}  hdg ${(-P.heading * MathUtils.RAD2DEG).toFixed(0)}°`,
-      `v ${(P.speed * 3.6).toFixed(0)} km/h  vF ${P.vForward.toFixed(1)} vL ${P.vLateral.toFixed(1)}  slip ${(P.slip * MathUtils.RAD2DEG).toFixed(0)}°`,
+      `v ${(P.speed * MPH).toFixed(0)} mph  vF ${P.vForward.toFixed(1)} vL ${P.vLateral.toFixed(1)}  slip ${(P.slip * MathUtils.RAD2DEG).toFixed(0)}°`,
       `drift ${P.drifting} air ${P.airborne} wait ${P.waiting}  n.y ${P.groundNormal.y.toFixed(3)}${
         P.tunnel ? `  tunnel ${P.tunnel.d.toFixed(0)} m grade ${(P.tunnel.grade * 100).toFixed(1)}%${P.tunnel.exit ? ' exit seen' : ''}` : ''
       }`,
-      `tyres  front ${(P.tyre.slipF * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tyre.loadF / 1000).toFixed(1)} kN  rear ${(P.tyre.slipR * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tyre.loadR / 1000).toFixed(1)} kN  wheel ${(P.wheelSpeed * 3.6).toFixed(0)} km/h  steer ${(P.steer * MathUtils.RAD2DEG).toFixed(0)}°`,
+      `tyres  front ${(P.tyre.slipF * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tyre.loadF / 1000).toFixed(1)} kN  rear ${(P.tyre.slipR * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tyre.loadR / 1000).toFixed(1)} kN  wheel ${(P.wheelSpeed * MPH).toFixed(0)} mph  steer ${(P.steer * MathUtils.RAD2DEG).toFixed(0)}°`,
       (() => {
         const box = P.drivetrain;
         const out = box.output();

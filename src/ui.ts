@@ -1,5 +1,6 @@
 import type { ShiftMode } from './car/drivetrain';
 import { DRIVETRAIN } from './config';
+import type { InputDevice } from './input';
 import { parseCoordinates, SPOTS, type Spot } from './locations';
 import { PlaceSearch } from './places';
 import type { ScoreState } from './scoring';
@@ -8,17 +9,22 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 
 const fmt = new Intl.NumberFormat('en-US');
 
+const PAD_HINTS =
+  '<b>RT/LT</b> gas · brake/reverse &nbsp; <b>L stick</b> steer &nbsp; <b>A</b> handbrake &nbsp; <b>LB/RB</b> shift (manual) &nbsp; <b>View</b> auto<br />' +
+  '<b>R stick</b> look around &nbsp; <b>D-pad ◀▶</b> camera angle &nbsp; <b>▲▼</b> zoom &nbsp; <b>Y</b> reset &nbsp; <b>Menu</b> pause';
+
+/** m/s → mph, for everything the game displays. */
+export const MPH = 2.236936;
+
 export interface DriveDisplay {
   rpm: number;
   gear: number;
   mode: ShiftMode;
   limiting: boolean;
-  /** A manual downshift was just refused (it would over-rev). */
-  refused: boolean;
 }
 
 // Tach geometry: 0…TACH_MAX rpm over a 270° sweep, 0 at lower left.
-const TACH_MAX = 8000;
+const TACH_MAX = 9000;
 const TACH_START = -135;
 const TACH_SWEEP = 270;
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -49,6 +55,9 @@ export class Hud {
   private readonly tachGear = $('tach-gear');
   private readonly gearbox = $('gearbox');
   private readonly gbMode = $('gb-mode');
+  private readonly hints = $('hints');
+  private readonly keyHints = this.hints.innerHTML;
+  private device: InputDevice | null = null;
   private readonly gearEls = new Map<number, HTMLElement>();
   private needle!: SVGGElement;
   private lastAttribution = '';
@@ -86,7 +95,6 @@ export class Hud {
     this.needle.setAttribute('transform', `rotate(${tachAngle(d.rpm).toFixed(1)} 100 100)`);
     this.tach.classList.toggle('shift', d.mode === 'manual' && d.rpm > DRIVETRAIN.redline - 500);
     this.tach.classList.toggle('limit', d.limiting);
-    this.gearbox.classList.toggle('refused', d.refused);
     if (d.gear !== this.lastGear) {
       this.gearEls.get(this.lastGear)?.classList.remove('on');
       this.gearEls.get(d.gear)?.classList.add('on');
@@ -134,6 +142,14 @@ export class Hud {
     this.needle.append(line, hub);
   }
 
+  /** Shows the controls for the device in use. */
+  setDevice(device: InputDevice): void {
+    if (device === this.device) return;
+    this.device = device;
+    this.hints.innerHTML = device === 'gamepad' ? PAD_HINTS : this.keyHints;
+    document.body.classList.toggle('gamepad', device === 'gamepad');
+  }
+
   show(visible: boolean): void {
     this.root.hidden = !visible;
     this.touch.hidden = !visible || !matchMedia('(pointer: coarse)').matches;
@@ -143,8 +159,9 @@ export class Hud {
     this.logo.hidden = !on;
   }
 
-  update(kmh: number, score: ScoreState): void {
-    this.speed.textContent = String(Math.round(kmh));
+  /** `speed` in m/s. */
+  update(speed: number, score: ScoreState): void {
+    this.speed.textContent = String(Math.round(speed * MPH));
     this.total.textContent = fmt.format(score.total);
     this.best.textContent = fmt.format(score.best);
     this.combo.hidden = !score.drifting;
@@ -210,6 +227,7 @@ export class Menu {
   private readonly keyRow = $('key-row');
   private readonly keyInput = $<HTMLInputElement>('api-key');
   private readonly resumeRow = $('resume-row');
+  private device: InputDevice | null = null;
   private places: PlaceSearch | null = null;
   private pending: AbortController | null = null;
   private debounce = 0;
@@ -262,12 +280,80 @@ export class Menu {
   show(paused: boolean): void {
     this.root.hidden = false;
     this.resumeRow.hidden = !paused;
+    this.root.classList.toggle('paused', paused);
+    if (this.device === 'gamepad') this.focusDefault();
+  }
+
+  /** Gamepad users get a focused control to start from. */
+  setDevice(device: InputDevice): void {
+    if (device === this.device) return;
+    this.device = device;
+    if (device === 'gamepad' && this.visible && !this.root.contains(document.activeElement)) this.focusDefault();
+  }
+
+  /** Gamepad focus move: to the nearest visible control in that direction. */
+  navigate(dir: { x: number; y: number }): void {
+    const current = document.activeElement as HTMLElement | null;
+    if (!current || !this.root.contains(current)) {
+      this.focusDefault();
+      return;
+    }
+    const from = current.getBoundingClientRect();
+    const fx = from.left + from.width / 2;
+    const fy = from.top + from.height / 2;
+    let best: HTMLElement | null = null;
+    let bestScore = Infinity;
+    for (const el of this.focusables()) {
+      if (el === current) continue;
+      const r = el.getBoundingClientRect();
+      const dx = r.left + r.width / 2 - fx;
+      const dy = r.top + r.height / 2 - fy;
+      const along = dir.x ? dx * dir.x : dy * dir.y;
+      const across = Math.abs(dir.x ? dy : dx);
+      if (along <= 1) continue;
+      const score = along + 2 * across;
+      if (score < bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    }
+    if (best) this.focus(best);
+  }
+
+  /** Gamepad A: activates the focused control. */
+  select(): void {
+    const el = document.activeElement as HTMLElement | null;
+    if (!el || !this.root.contains(el)) this.focusDefault();
+    else if (el.tagName !== 'INPUT') el.click();
+  }
+
+  /** Gamepad B: closes the suggestion list; false if there was nothing to close. */
+  back(): boolean {
+    if (this.suggestions.hidden) return false;
+    this.suggestions.hidden = true;
+    this.focus(this.search);
+    return true;
+  }
+
+  private focusables(): HTMLElement[] {
+    return [...this.root.querySelectorAll<HTMLElement>('button, input, .suggestions li')].filter((el) => el.getClientRects().length > 0);
+  }
+
+  private focusDefault(): void {
+    const target = this.resumeRow.hidden ? this.root.querySelector<HTMLElement>('.spot') : $('resume');
+    if (target) this.focus(target);
+  }
+
+  private focus(el: HTMLElement): void {
+    el.focus({ preventScroll: true });
+    el.scrollIntoView({ block: 'nearest' });
   }
 
   hide(): void {
     this.root.hidden = true;
     this.suggestions.hidden = true;
-    this.search.blur();
+    // Don't leave a hidden button focused: Space (the handbrake) would press it.
+    if (this.root.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   }
 
   get visible(): boolean {
@@ -316,6 +402,8 @@ export class Menu {
         ...results.slice(0, 6).map((r) => {
           const li = document.createElement('li');
           li.textContent = r.text;
+          // Focusable for gamepad navigation.
+          li.tabIndex = -1;
           li.addEventListener('click', async () => {
             this.suggestions.hidden = true;
             const pick = ++this.token;

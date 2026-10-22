@@ -44,6 +44,7 @@ export interface OverpassDecision {
     | 'portal-no-cover'
     | 'portal-high'
     | 'portal-low'
+    | 'portal-building'
     | 'tunnel-exit'
     | 'tunnel-wall';
   /** Distance along `dir` where the deck starts (−1 if none) and its height. */
@@ -54,7 +55,7 @@ export interface OverpassDecision {
    * and `along` run along `dir` from `hit`; `side` runs across it (signed
    * distance) from the point `mid` metres along.
    */
-  samples: Array<[number, number | null, 'skirt' | 'far' | 'along' | 'side']>;
+  samples: Array<[number, number | null, 'skirt' | 'far' | 'along' | 'side' | 'lid']>;
   mid?: number;
   /** Portal test: level rays at 1.5, 3 and 4.5 m, [distance past the hit, normal y] or null. */
   lean?: Array<[number, number] | null>;
@@ -274,6 +275,7 @@ export class CarPhysics {
     this.blobCache.clear();
     this.blobs.length = 0;
     this.tunnel = null;
+    this.roadTrail.length = 0;
     this.pitch = this.roll = 0;
     this.groundNormal.set(0, 1, 0);
     this.groundY = pos.y;
@@ -297,6 +299,7 @@ export class CarPhysics {
     this.overpassCache.clear();
     this.blobCache.clear();
     this.blobs.length = 0;
+    this.roadTrail.length = 0;
     this.groundY += dy;
     for (let i = 0; i < 4; i++) this.cornerH[i] += dy;
     const t = this.tunnel;
@@ -410,6 +413,7 @@ export class CarPhysics {
     this.slip = Math.atan2(this.vLateral, Math.max(Math.abs(this.vForward), 1));
 
     this.updateTunnel(collider);
+    this.recordRoad();
 
     // Drifting is only an observation of the slide (scoring, smoke, camera).
     const slip = Math.abs(this.slip);
@@ -678,6 +682,8 @@ export class CarPhysics {
   private readonly cornerProbeY = [0, 0, 0, 0];
   /** Set while inside a tunnel the portal test let the car into. */
   tunnel: Tunnel | null = null;
+  /** Road heights behind the car on real ground (a point a metre), for a tunnel's starting grade. */
+  private readonly roadTrail: Array<{ x: number; y: number; z: number }> = [];
   private readonly overpassCache = new Map<string, boolean>();
   private readonly blobCache = new Map<string, Blob | null>();
   /** Recently passed blobs: probes ignore their surfaces. */
@@ -993,8 +999,13 @@ export class CarPhysics {
     // the far portal or a wall; out from under it, the usual tests apply.
     const t = this.tunnel;
     if (t) {
-      // Still going through the entry curtain and its skirt.
-      if (t.d < P.tunnelEntryGrace) return true;
+      // Still going through the entry curtain and its skirt: faces under the
+      // same cover pass. Not a building just past a skyway (whose roof is far
+      // higher), which the usual tests judge.
+      if (t.d < P.tunnelEntryGrace) {
+        const c = this.coverAt(collider, hit.point.x + dx, hit.point.z + dz, t.h);
+        if (c !== null && c >= t.clearance - 1.5 && c <= t.clearance + P.tunnelGraceCover) return true;
+      }
       if (this.coverAt(collider, this.pos.x, this.pos.z, t.h) !== null) return this.isTunnelExit(collider, hit, dx, dz);
     }
     const key = `${Math.round(hit.point.x / 2)},${Math.round(hit.point.z / 2)},${Math.round(Math.atan2(dx, dz) / (Math.PI / 8))}`;
@@ -1159,12 +1170,17 @@ export class CarPhysics {
             const [x, z] = at(s);
             const c = this.coverAt(collider, x - dz * off, z + dx * off, g);
             if (c !== null) cs.push(c);
+            if (off === 0) samples.push([s, c, 'lid']);
           }
           cs.sort((p, q) => p - q);
           median = Math.min(median, cs.length ? cs[cs.length >> 1] : cover);
         }
         if (cover > P.portalMaxCover) reason = 'portal-high';
         else if (median < P.portalMinClearance) reason = 'portal-low';
+        // A tunnel's lid or a covered roadway's deck runs on at about the
+        // portal's height; behind a building's overhang the cover jumps to its
+        // roof (and the hollow shell has nothing inside to hit).
+        else if (median > cover + P.portalLidRise) reason = 'portal-building';
         else if (leans()) {
           result = true;
           reason = 'portal-curtain';
@@ -1198,10 +1214,33 @@ export class CarPhysics {
     return out;
   }
 
-  private enterTunnel(cover: number, g: number): void {
+  /** Keeps a metre-spaced trail of the last 20 m of real road under the car. */
+  private recordRoad(): void {
+    if (this.airborne || this.tunnel || this.usedLongProbe) return;
+    const last = this.roadTrail[this.roadTrail.length - 1];
+    if (last && Math.hypot(this.pos.x - last.x, this.pos.z - last.z) < 1) return;
+    this.roadTrail.push({ x: this.pos.x, y: this.groundY, z: this.pos.z });
+    if (this.roadTrail.length > 20) this.roadTrail.shift();
+  }
+
+  /**
+   * The road's grade coming into a portal: over the last 8–16 m of trail, so
+   * a bump at the portal doesn't tilt the whole virtual road (the ground
+   * normal under the car alone can be 7% off cresting one).
+   */
+  private approachGrade(): number {
+    const tr = this.roadTrail;
+    for (let i = 0; i < tr.length - 1; i++) {
+      const d = Math.hypot(this.pos.x - tr[i].x, this.pos.z - tr[i].z);
+      if (d <= 16 && d >= 8) return (this.groundY - tr[i].y) / d;
+    }
     const n = this.groundNormal;
     const sp = Math.hypot(this.vel.x, this.vel.z) || 1;
-    const grade = -(n.x * this.vel.x + n.z * this.vel.z) / sp / n.y;
+    return -(n.x * this.vel.x + n.z * this.vel.z) / sp / n.y;
+  }
+
+  private enterTunnel(cover: number, g: number): void {
+    const grade = this.approachGrade();
     this.tunnel = {
       h: g,
       grade: MathUtils.clamp(grade, -P.tunnelMaxGrade, P.tunnelMaxGrade),
@@ -1339,8 +1378,10 @@ export class CarPhysics {
       // Follow real road down or level, never up: a sloped curtain skirt would ratchet it.
       if (this.groundY <= t.h + 0.1) t.h = this.groundY;
       t.real++;
-      t.open = this.coverAt(collider, this.pos.x, this.pos.z, t.h) === null ? t.open + 1 : 0;
-    } else t.real = t.open = 0;
+    } else t.real = 0;
+    // Open sky overhead, on real ground or the virtual road: out of the tunnel
+    // (its lid is always in the mesh), or past a skyway taken for a portal.
+    t.open = this.coverAt(collider, this.pos.x, this.pos.z, t.h) === null ? t.open + 1 : 0;
     // (Real ground only counts once the car has been on the virtual road: a
     // tunnel can start with road under the cover's edge.)
     const onVirtual = t.scannedAt > -Infinity;

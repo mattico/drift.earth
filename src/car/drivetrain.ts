@@ -53,8 +53,9 @@ export class Drivetrain {
   limiting = false;
   /** Drive force delivered last step (N), for the debug readout. */
   force = 0;
-  /** Set briefly when a manual downshift was refused because it would over-rev. */
-  refused = 0;
+  /** Throttle the engine got last step, and whether the clutch was locked to the wheels (for the sound). */
+  throttle = 0;
+  engaged = false;
   private shiftTimer = 0;
   private autoHold = 0;
   private engineRpm: number = D.idleRpm;
@@ -75,15 +76,11 @@ export class Drivetrain {
     if (this.gear > 0 && this.gear < D.gears.length) this.shift(this.gear + 1);
   }
 
-  shiftDown(v: number): void {
+  shiftDown(): void {
     this.mode = 'manual';
-    if (this.gear <= 1) return;
-    // A downshift that would throw the engine past the limiter is refused.
-    if (this.wheelRpm(v, this.gear - 1) > D.limiter + 200) {
-      this.refused = 0.6;
-      return;
-    }
-    this.shift(this.gear - 1);
+    // Always allowed, even over the limiter: the engine holds on it with no
+    // drive and, off the throttle, engine braking drags at the rear wheels.
+    if (this.gear > 1) this.shift(this.gear - 1);
   }
 
   toggleMode(): void {
@@ -121,7 +118,6 @@ export class Drivetrain {
     declutch: boolean,
     drifting: boolean,
   ): DriveOutput {
-    this.refused = Math.max(0, this.refused - dt);
     this.autoHold = Math.max(0, this.autoHold - dt);
     if (reverse) this.gear = -1;
     else if (this.gear < 0) this.gear = 1;
@@ -167,6 +163,8 @@ export class Drivetrain {
       if (locked) engineBrake = toForce(D.engineBrakeTorque * (this.engineRpm / D.redline)) * Math.max(0, 1 - throttle / 0.15);
     }
     this.force = drive;
+    this.throttle = throttle;
+    this.engaged = locked;
     this.rpm = MathUtils.damp(this.rpm, this.engineRpm, 30, dt);
     const inertia = (D.wheelInertia + (locked ? D.engineInertia * ratio * ratio : 0)) / D.wheelRadius ** 2;
     return { drive, engineBrake, inertia };

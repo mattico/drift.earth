@@ -15,14 +15,44 @@ export class ChaseCamera {
   pitch: number = C.pitchPresets[0];
   zoom = 1;
   pitchPreset = 0;
+  /** Free camera: orbit and tilt on top of the chase view, easing back once let go. */
+  orbitYaw = 0;
+  orbitPitch = 0;
+  private orbitIdle = Infinity;
   private shake = 0;
 
   constructor(aspect: number) {
     this.camera = new PerspectiveCamera(C.fov, aspect, 1, 6000);
   }
 
-  cyclePitch(): void {
-    this.pitchPreset = (this.pitchPreset + 1) % C.pitchPresets.length;
+  /** Steps through the pitch presets (`dir` +1 next, −1 previous), wrapping. */
+  cyclePitch(dir = 1): void {
+    const n = C.pitchPresets.length;
+    this.pitchPreset = (this.pitchPreset + dir + n) % n;
+  }
+
+  /**
+   * Free camera: `x` orbits around the car and `y` tilts (stick up looks up,
+   * toward the horizon), as rates, −1…1. Let go and it eases back behind the car.
+   */
+  look(x: number, y: number, dt: number): void {
+    if (x || y) {
+      this.orbitIdle = 0;
+      this.orbitYaw = wrapAngle(this.orbitYaw - x * C.orbitRate * dt);
+      this.orbitPitch += y * C.orbitTiltRate * dt;
+    } else {
+      this.orbitIdle += dt;
+      if (this.orbitIdle > C.orbitHold) {
+        const k = 1 - Math.exp(-dt / C.orbitReturnTau);
+        this.orbitYaw -= this.orbitYaw * k;
+        this.orbitPitch -= this.orbitPitch * k;
+      }
+    }
+  }
+
+  /** The direction the camera faces (yaw about +Y, like a heading), free camera included. */
+  get viewYaw(): number {
+    return this.yaw + this.orbitYaw;
   }
 
   zoomBy(factor: number): void {
@@ -39,6 +69,8 @@ export class ChaseCamera {
     this.yaw = heading;
     this.distance = distance;
     this.pitch = pitch;
+    this.orbitYaw = this.orbitPitch = 0;
+    this.orbitIdle = Infinity;
     this.apply();
   }
 
@@ -74,9 +106,13 @@ export class ChaseCamera {
   }
 
   private apply(): void {
-    const cp = Math.cos(this.pitch);
-    const sp = Math.sin(this.pitch);
-    _back.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    // Keep the free camera's tilt between near-horizontal and straight down.
+    const pitch = MathUtils.clamp(this.pitch + this.orbitPitch, C.orbitMinPitch, MathUtils.degToRad(88));
+    this.orbitPitch = pitch - this.pitch;
+    const cp = Math.cos(pitch);
+    const sp = Math.sin(pitch);
+    const yaw = this.viewYaw;
+    _back.set(Math.sin(yaw), 0, Math.cos(yaw));
     const cam = this.camera;
     cam.position.set(
       this.target.x + _back.x * cp * this.distance,

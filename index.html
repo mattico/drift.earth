@@ -6,8 +6,186 @@
     <meta name="color-scheme" content="dark" />
     <title>drift.earth</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2214%22 fill=%22%23ff4d3d%22/%3E%3Cpath d=%22M9 20c4-9 10-9 14-8%22 stroke=%22%23fff%22 stroke-width=%223%22 fill=%22none%22 stroke-linecap=%22round%22/%3E%3C/svg%3E" />
+    <!-- Splash: inline so it paints before any script or the bundled CSS arrives. main.ts fades it out. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #0b0e13;
+      }
+      .splash {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 26px;
+        background:
+          radial-gradient(ellipse at 30% 20%, rgba(255, 77, 61, 0.16), transparent 60%),
+          radial-gradient(ellipse at 75% 85%, rgba(255, 210, 63, 0.07), transparent 55%),
+          #0b0e13;
+        color: #eef2f7;
+        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        transition:
+          opacity 0.6s ease,
+          visibility 0.6s;
+      }
+      .splash.done {
+        opacity: 0;
+        visibility: hidden;
+      }
+      .splash-mark {
+        position: relative;
+        width: 176px;
+        height: 176px;
+      }
+      .splash-globe {
+        position: absolute;
+        inset: 30px;
+        transform: rotate(-18deg);
+      }
+      .splash-globe .meridian {
+        transform-box: fill-box;
+        transform-origin: center;
+        animation: splash-turn 4.8s linear infinite;
+      }
+      .splash-globe .meridian:nth-of-type(2) {
+        animation-delay: -1.6s;
+      }
+      .splash-globe .meridian:nth-of-type(3) {
+        animation-delay: -3.2s;
+      }
+      /* The car drifts clockwise round the globe; its tyre marks fade out behind it. */
+      .splash-orbit {
+        position: absolute;
+        inset: 0;
+        animation: splash-spin 2.6s linear infinite;
+      }
+      .splash-marks {
+        position: absolute;
+        inset: 6px;
+        border-radius: 50%;
+        background: conic-gradient(from 0deg, transparent 0 50%, rgba(255, 77, 61, 0.85) 98%, transparent 98%);
+        -webkit-mask: radial-gradient(closest-side, transparent 88%, #000 88.5% 90.5%, transparent 91% 95%, #000 95.5% 97.5%, transparent 98%);
+        mask: radial-gradient(closest-side, transparent 88%, #000 88.5% 90.5%, transparent 91% 95%, #000 95.5% 97.5%, transparent 98%);
+      }
+      .splash-car {
+        position: absolute;
+        left: calc(50% - 7px);
+        top: 3px;
+        width: 14px;
+        height: 24px;
+        border-radius: 4px 4px 3px 3px;
+        background:
+          linear-gradient(90deg, transparent 3px, #fff 3px 5.5px, transparent 5.5px 8.5px, #fff 8.5px 11px, transparent 11px),
+          #ff3b30;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.35),
+          0 0 18px rgba(255, 77, 61, 0.7);
+        /* Moving right at the top of the circle, nose turned in: a drift. */
+        transform: rotate(118deg);
+      }
+      .splash-word {
+        margin: 0;
+        font-size: clamp(40px, 9vw, 64px);
+        font-weight: 900;
+        font-style: italic;
+        letter-spacing: -0.04em;
+        line-height: 1;
+      }
+      .splash-word span {
+        color: #ff4d3d;
+      }
+      .splash-sub {
+        margin: -14px 0 0;
+        color: #9aa6b5;
+        font-size: 15px;
+      }
+      .splash-bar {
+        width: 168px;
+        height: 4px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+      }
+      .splash-bar::after {
+        content: '';
+        display: block;
+        width: 40%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #ff4d3d, #ffd23f);
+        animation: splash-sweep 1.3s ease-in-out infinite;
+      }
+      @keyframes splash-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @keyframes splash-turn {
+        0% {
+          transform: scaleX(1);
+          opacity: 0.2;
+        }
+        50% {
+          transform: scaleX(0.02);
+          opacity: 0.55;
+        }
+        100% {
+          transform: scaleX(1);
+          opacity: 0.2;
+        }
+      }
+      @keyframes splash-sweep {
+        from {
+          transform: translateX(-100%);
+        }
+        to {
+          transform: translateX(250%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .splash *,
+        .splash *::after {
+          animation: none !important;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="splash" class="splash" role="status" aria-label="Loading drift.earth">
+      <div class="splash-mark" aria-hidden="true">
+        <svg class="splash-globe" viewBox="0 0 116 116">
+          <defs>
+            <radialGradient id="splash-sea" cx="38%" cy="32%" r="75%">
+              <stop offset="0" stop-color="#22324a" />
+              <stop offset="0.6" stop-color="#121a26" />
+              <stop offset="1" stop-color="#0c1119" />
+            </radialGradient>
+          </defs>
+          <circle cx="58" cy="58" r="56" fill="url(#splash-sea)" stroke="rgba(255,255,255,0.14)" />
+          <g fill="none" stroke="#9fc2ff" stroke-width="1">
+            <ellipse class="meridian" cx="58" cy="58" rx="56" ry="56" />
+            <ellipse class="meridian" cx="58" cy="58" rx="56" ry="56" />
+            <ellipse class="meridian" cx="58" cy="58" rx="56" ry="56" />
+          </g>
+          <g fill="none" stroke="rgba(159,194,255,0.22)" stroke-width="1">
+            <line x1="2" y1="58" x2="114" y2="58" />
+            <ellipse cx="58" cy="58" rx="48" ry="9" transform="translate(0 -28)" />
+            <ellipse cx="58" cy="58" rx="48" ry="9" transform="translate(0 28)" />
+          </g>
+        </svg>
+        <div class="splash-orbit">
+          <div class="splash-marks"></div>
+          <div class="splash-car"></div>
+        </div>
+      </div>
+      <h1 class="splash-word">drift<span>.earth</span></h1>
+      <p class="splash-sub">Drift anywhere on a photorealistic planet.</p>
+      <div class="splash-bar"></div>
+      <noscript><p class="splash-sub">drift.earth needs JavaScript.</p></noscript>
+    </div>
     <canvas id="view"></canvas>
 
     <div id="hud" hidden>
@@ -33,11 +211,15 @@
           <svg viewBox="0 0 200 200" id="tach-dial" aria-hidden="true"></svg>
           <div class="tach-center">
             <div class="tach-gear" id="tach-gear">1</div>
-            <div class="tach-speed"><span id="speed">0</span><small>km/h</small></div>
+            <div class="tach-speed"><span id="speed">0</span><small>mph</small></div>
           </div>
         </div>
       </div>
       <div id="status" class="status" hidden></div>
+      <div id="minimap" class="minimap" hidden>
+        <canvas aria-label="Map"></canvas>
+        <div class="minimap-copy"></div>
+      </div>
       <div class="hints panel-lite" id="hints">
         <b>W/S</b> gas · brake/reverse &nbsp; <b>A/D</b> steer &nbsp; <b>Space</b> handbrake<br />
         <b>Q/E</b> shift (manual) &nbsp; <b>T</b> auto &nbsp; <b>R</b> reset &nbsp; <b>C</b> camera &nbsp; <b>wheel/+/-</b> zoom &nbsp; <b>M</b> mute &nbsp; <b>F3</b> debug &nbsp; <b>Esc</b> menu
@@ -102,6 +284,7 @@
         <div class="menu-footer">
           <button id="practice" class="btn ghost" type="button">Practice track (no map)</button>
           <button id="debug-tools" class="btn ghost" type="button">Debug tools</button>
+          <span class="pad-hint">A select · B back<span class="pad-resume"> · Menu resume</span></span>
           <span id="menu-error" class="menu-error" hidden></span>
         </div>
       </div>

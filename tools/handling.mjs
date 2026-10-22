@@ -104,7 +104,7 @@ function simulate(kmh, phases, opts = {}) {
       r.maxSlip = Math.max(r.maxSlip, Math.abs(p.slip) * DEG);
       // p.slip is clamped for scoring; a spin shows in the unclamped angle.
       if (p.speed > 2 && p.drivetrain.gear > 0) r.maxBodySlip = Math.max(r.maxBodySlip, Math.abs(Math.atan2(p.vLateral, p.vForward)) * DEG);
-      for (const m of [60, 100]) if (r.marks[m] === undefined && p.speed * 3.6 >= m) r.marks[m] = t;
+      for (const m of [60, 96.56, 100]) if (r.marks[m] === undefined && p.speed * 3.6 >= m) r.marks[m] = t; // 96.56 km/h = 60 mph
       if (Math.round(t / dt) % 30 === 0) r.timeline.push({ t, slip: p.slip * DEG, yaw: p.yawRate * DEG, kmh: p.speed * 3.6, gear: p.drivetrain.gear, drifting: p.drifting });
     }
   }
@@ -138,7 +138,7 @@ if (args.includes('--json')) {
   const f = (n, w = 4) => n.toFixed(0).padStart(w);
   console.log(`${'scenario'.padEnd(34)} ${'held slip'.padStart(9)} ${'yaw°/s'.padStart(6)} ${'km/h'.padStart(5)}  ${'max slip'.padStart(8)} ${'path°'.padStart(6)} drift`);
   for (const [name, r] of Object.entries(results)) {
-    const extra = name.startsWith('launch') ? `  0–60 ${r.zeroTo[60]?.toFixed(2)} s, 0–100 ${r.zeroTo[100]?.toFixed(2)} s` : '';
+    const extra = name.startsWith('launch') ? `  0–60 ${r.zeroTo[60]?.toFixed(2)} s, 0–100 ${r.zeroTo[100]?.toFixed(2)} s (0–60 mph ${r.zeroTo[96.56]?.toFixed(2)} s)` : '';
     console.log(
       `${name.padEnd(34)} ${f(r.held.slip, 8)}° ${f(r.held.yaw, 6)} ${f(r.held.kmh, 5)}  ${f(r.maxSlip, 7)}° ${f(r.path, 6)} ${r.drift.toFixed(1).padStart(4)} s${r.spun ? '  SPUN' : ''}${extra}`,
     );

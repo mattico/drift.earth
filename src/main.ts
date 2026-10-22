@@ -33,6 +33,16 @@ const game = new Game(document.getElementById('view') as HTMLCanvasElement, hud,
   onMenu() {
     menu.show(false);
   },
+  onMenuInput(actions, device) {
+    menu.setDevice(device);
+    if (!actions || !menu.visible) return;
+    if (actions.nav) menu.navigate(actions.nav);
+    if (actions.select) menu.select();
+    if (actions.back && !menu.back() && game.canResume) {
+      menu.hide();
+      game.resume();
+    }
+  },
 });
 
 const menu = new Menu({
@@ -88,7 +98,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Deep links: ?lat=..&lon=..&bearing=..[&top=1][&h=..][&kmh=..] or ?practice.
+// Deep links: ?lat=..&lon=..&bearing=..[&top=1][&h=..][&mph=..|&kmh=..] or ?practice.
 // With no link, drop straight into the default spot; Esc opens the menu.
 // ?debug[=wire,probes,…] opens the debug panel.
 const params = new URLSearchParams(location.search);
@@ -101,7 +111,7 @@ if (params.has('practice')) {
 } else if (apiKey && params.has('lat') && params.has('lon') && Number.isFinite(lat) && Number.isFinite(lon)) {
   const opts: SpawnOptions = {};
   const h = params.get('h')?.trim();
-  const kmh = Number(params.get('kmh'));
+  const kmh = params.has('mph') ? Number(params.get('mph')) * 1.609344 : Number(params.get('kmh'));
   if (h && Number.isFinite(Number(h))) opts.height = Number(h);
   if (Number.isFinite(kmh) && kmh) opts.kmh = kmh;
   menu.hide();
@@ -123,3 +133,15 @@ if (params.has('practice')) {
 // Exposed for debugging and automated runs; `__drift.debug` is the trace and
 // overlay API (see tools/capture.mjs).
 (window as unknown as { __drift: Game }).__drift = game;
+
+// The splash (inline in index.html) covers the page until the game has drawn
+// its first frame, then fades into whatever's next: the menu or the fly-in.
+const splash = document.getElementById('splash');
+if (splash) {
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      splash.classList.add('done');
+      splash.addEventListener('transitionend', () => splash.remove(), { once: true });
+    }),
+  );
+}
