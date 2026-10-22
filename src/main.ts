@@ -149,8 +149,13 @@ const menu = new Menu({
       history.replaceState(null, '', `${location.pathname}${rest.length ? `?${rest.join('&')}` : ''}${location.hash}`);
     }
   },
+  onHeadphones(on) {
+    game.setHeadphones(on);
+    menu.setHeadphones(on);
+  },
 });
 menu.setApiKey(apiKey);
+menu.setHeadphones(game.headphones);
 // Before anything is driven, so the first run is in the chosen car.
 const startCar = readCar();
 game.setCar(startCar);

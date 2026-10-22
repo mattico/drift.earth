@@ -150,6 +150,19 @@ export const TILES = {
   cacheMinBytes: 0.6 * 2 ** 30,
 };
 
+// Where the car is heard from. The camera is far too far back to place the
+// tailpipes and tires apart, so the listener stands closer, behind the car
+// along the camera's view (orbit the camera and the listener goes round too).
+export const AUDIO = {
+  // Nearer spreads the car's sounds wider, but keep it clear of the car's
+  // ends (~2.2 m from its centre) or they'd pass behind your head.
+  listenDistance: 3.5,
+  listenHeight: 1.1,
+  // Falloff past listenDistance (inverse; 0 = none): the far end of the car a
+  // little quieter. Nearer than that, everything plays at its tuned level.
+  rolloff: 1,
+};
+
 export const SCORING = {
   pointsFactor: 0.5,
   /** A wall hit harder than this (m/s into the wall) ends the drift chain. */

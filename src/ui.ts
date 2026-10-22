@@ -243,6 +243,8 @@ export interface MenuHandlers {
   onKey(key: string): void;
   onDebug(): void;
   onCar(id: CarId): void;
+  /** The sound button: headphones (3D) or speakers. */
+  onHeadphones(on: boolean): void;
 }
 
 export class Menu {
@@ -256,6 +258,7 @@ export class Menu {
   private readonly keyRow = $('key-row');
   private readonly keyInput = $<HTMLInputElement>('api-key');
   private readonly resumeRow = $('resume-row');
+  private readonly audioOut = $('audio-out');
   private readonly carButtons = new Map<CarId, HTMLButtonElement>();
   private device: InputDevice | null = null;
   private places: PlaceSearch | null = null;
@@ -278,6 +281,7 @@ export class Menu {
       onKey: handlers.onKey,
       onDebug: handlers.onDebug,
       onCar: handlers.onCar,
+      onHeadphones: handlers.onHeadphones,
     };
     this.h = h;
     const cars = $('cars');
@@ -288,6 +292,7 @@ export class Menu {
     $('resume').addEventListener('click', () => h.onResume());
     $('respawn').addEventListener('click', () => h.onRespawn());
     $('debug-tools').addEventListener('click', () => h.onDebug());
+    this.audioOut.addEventListener('click', () => h.onHeadphones(this.audioOut.getAttribute('aria-pressed') !== 'true'));
     $('save-key').addEventListener('click', () => {
       const key = this.keyInput.value.trim();
       if (key) h.onKey(key);
@@ -313,6 +318,12 @@ export class Menu {
   /** Marks the car the game is using in the picker. */
   setCar(id: CarId): void {
     for (const [car, b] of this.carButtons) b.setAttribute('aria-pressed', String(car === id));
+  }
+
+  /** Shows whether sound is set up for headphones (3D) or speakers. */
+  setHeadphones(on: boolean): void {
+    this.audioOut.setAttribute('aria-pressed', String(on));
+    this.audioOut.textContent = on ? 'Sound: headphones (3D)' : 'Sound: speakers';
   }
 
   show(paused: boolean): void {

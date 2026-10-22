@@ -47,6 +47,8 @@ const LOCATE_MAX_SETTLE = 3;
 const FINE_TILE_ERROR = 1000;
 /** localStorage key for the free camera's auto re-centre (R3). */
 const RECENTER_STORAGE = 'drift.earth:recenter';
+/** localStorage key for headphones (3D) or speakers sound. */
+const HEADPHONES_STORAGE = 'drift.earth:headphones';
 
 /** Exact spawn for deep links and repro links. */
 export interface SpawnOptions {
@@ -168,6 +170,11 @@ export class Game {
     } catch {
       // Storage blocked: the default (re-centre).
     }
+    try {
+      this.audio.setHeadphones(localStorage.getItem(HEADPHONES_STORAGE) === '1');
+    } catch {
+      // Storage blocked: the default (speakers).
+    }
 
     this.input = new InputManager(document.getElementById('touch')!, canvas);
     this.input.onPadConnected = (_name, supported) =>
@@ -266,6 +273,20 @@ export class Game {
       // Storage blocked: for this visit only.
     }
     this.hud.toast(on ? 'Camera re-centres' : 'Camera stays put', 'good');
+  }
+
+  /** 3D sound for headphones, or plain stereo for speakers (the menu toggles it); remembered between visits. */
+  get headphones(): boolean {
+    return this.audio.headphones;
+  }
+
+  setHeadphones(on: boolean): void {
+    this.audio.setHeadphones(on);
+    try {
+      localStorage.setItem(HEADPHONES_STORAGE, on ? '1' : '0');
+    } catch {
+      // Storage blocked: for this visit only.
+    }
   }
 
   get carId(): CarId {
@@ -701,6 +722,7 @@ export class Game {
         slideF: P.tire.slideF,
         slideR: P.tire.slideR,
         airborne: P.airborne,
+        yaw: heading - this.chase.viewYaw,
       },
       dt,
     );

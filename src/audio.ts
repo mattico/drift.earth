@@ -21,9 +21,14 @@
  *   with road speed, and a clunk on every shift.
  * - Tires: front and rear squeal voices pitched by how fast each axle slides,
  *   a rasp from wheelspin, rolling road noise and wind with speed.
+ * - Placement: each voice comes from its place on the car (the tailpipes, the
+ *   engine bay, the gearbox, each axle), heard from a few metres behind the
+ *   car along the camera's view; the camera itself is too far back to tell
+ *   them apart. HRTF on headphones, plain level panning on speakers.
  */
 
 import { CARS, DEFAULT_CAR, type CarId, type DrivetrainSpec } from './car/cars';
+import { AUDIO } from './config';
 
 export interface AudioState {
   /** Engine rpm and redline. */
@@ -48,7 +53,12 @@ export interface AudioState {
   slideF: number;
   slideR: number;
   airborne: boolean;
+  /** The car's heading relative to the camera's view (rad, left +): which way it faces the listener. */
+  yaw: number;
 }
+
+/** A point on the car (m): x right, y up from the road, z back (the car faces −z, as in CarModel). */
+type Vec3 = readonly [x: number, y: number, z: number];
 
 /** How one car's engine, exhaust and gearbox sound. */
 interface CarSound {
@@ -60,8 +70,11 @@ interface CarSound {
   trimSpread: number;
   /** Chance per firing, at full overrun, of an unburnt charge popping in the exhaust. */
   popChance: number;
-  /** Per exhaust outlet (index = bank): its pipe's resonant delay (s) and stereo position. */
-  pipes: Array<[delay: number, pan: number]>;
+  /** Per exhaust outlet (index = bank): its pipe's resonant delay (s) and where it comes out. */
+  pipes: Array<[delay: number, at: Vec3]>;
+  /** Where the intake (and turbo, and blow-off valve) and the gearbox are. */
+  engineBay: Vec3;
+  gearbox: Vec3;
   /** The pipe loop's damping lowpass (Hz) and feedback: how many overtones ring, and how long. */
   pipeDamp: number;
   pipeFeedback: number;
@@ -101,10 +114,14 @@ const SOUNDS: Record<CarId, CarSound> = {
     trimSpread: 0.14,
     popChance: 0.035,
     // Slightly different pipe lengths keep the banks from sounding identical.
+    // Out either side of the rear bumper.
     pipes: [
-      [0.0118, -0.3],
-      [0.0134, 0.3],
+      [0.0118, [-0.55, 0.3, 2.1]],
+      [0.0134, [0.55, 0.3, 2.1]],
     ],
+    engineBay: [0, 0.8, -1.5],
+    // Behind the engine, under the front of the cabin.
+    gearbox: [0, 0.4, -0.3],
     pipeDamp: 650,
     pipeFeedback: 0.55,
     highpass: 25,
@@ -134,7 +151,11 @@ const SOUNDS: Record<CarId, CarSound> = {
     // Half as many firings as the V8 and still pops more often.
     popChance: 0.09,
     // One shorter pipe: it rings at 217 Hz and up, not in the V8's sub-bass.
-    pipes: [[0.0046, 0]],
+    // Out the middle of the bumper, like the ST's.
+    pipes: [[0.0046, [0, 0.3, 2.15]]],
+    engineBay: [0, 0.8, -1.55],
+    // A transverse transaxle, beside the engine at the front axle.
+    gearbox: [0.25, 0.4, -1.3],
     pipeDamp: 950,
     pipeFeedback: 0.5,
     highpass: 40,
@@ -158,6 +179,23 @@ const SOUNDS: Record<CarId, CarSound> = {
 };
 
 const MASTER = 0.5;
+/**
+ * A mono voice straight into the stereo bus plays at full level in both ears;
+ * an equal-power panner gives each ear 0.707 of it in the middle. Voices that
+ * went straight in before they were placed get this back, to keep the mix.
+ */
+const CENTRE_LIFT = Math.SQRT2;
+/**
+ * The browser's HRTF swells around 230 Hz (+6 dB) and thins the deep bass,
+ * whichever way the sound comes from; this takes it back out so headphones
+ * keep the tuned sound. Measured against equal-power panning in Chrome (within
+ * ±1.3 dB from 30 Hz to 5 kHz after it, but for the notches that tell
+ * direction).
+ */
+const HRTF_EQ: Array<[type: BiquadFilterType, hz: number, q: number, db: number]> = [
+  ['peaking', 230, 0.5, -6.5],
+  ['lowshelf', 40, 0.7, 6],
+];
 
 const ENGINE_WORKLET = /* js */ `
 class Engine extends AudioWorkletProcessor {
@@ -289,6 +327,10 @@ interface EngineRig {
   intakeTone: GainNode;
   popIn: GainNode;
   whistle: { osc: OscillatorNode; band: BiquadFilterNode; gain: GainNode; src: AudioBufferSourceNode } | null;
+  /** The engine bay's voices (intake, turbo, blow-off) go through here. */
+  bay: PannerNode;
+  /** The tailpipes, the pops and the engine bay. */
+  placed: Placed[];
   /** Swapped out: ignore a worklet that finishes loading after this. */
   dead: boolean;
 }
@@ -297,6 +339,13 @@ interface Squeal {
   osc: OscillatorNode;
   bands: BiquadFilterNode[];
   gain: GainNode;
+}
+
+/** A voice's panner, its HRTF correction (HRTF_EQ) and where on the car it sits. */
+interface Placed {
+  panner: PannerNode;
+  eq: BiquadFilterNode[];
+  at: Vec3;
 }
 
 export class CarAudio {
@@ -322,6 +371,10 @@ export class CarAudio {
   private roadFilter!: BiquadFilterNode;
   private roadGain!: GainNode;
   private windGain!: GainNode;
+  /** The transmission and tire voices' places, which move with the car (see place()). */
+  private spots!: Record<'gearbox' | 'diff' | 'front' | 'rear' | 'spin' | 'road', Placed>;
+  /** 3D (HRTF) for headphones, else plain level panning for speakers. */
+  headphones = false;
   // State between frames
   private gear = 1;
   /** Throttle lately (decays): a lift is measured against it, since the pedal is smoothed. */
@@ -354,6 +407,7 @@ export class CarAudio {
     this.crackle = 0;
     const ctx = this.ctx;
     if (!ctx) return;
+    this.place();
     const old = this.rig;
     if (old) {
       // A short fade, so the swap doesn't click.
@@ -387,19 +441,24 @@ export class CarAudio {
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     const filter = (type: BiquadFilterType, frequency: number, Q = 0.7, gain = 0) => filterNode(ctx, type, frequency, Q, gain);
     const gainNode = (v = 0) => gainOf(ctx, v);
+    const lift = gainNode(CENTRE_LIFT);
+    lift.connect(bus);
+    const spot = () => this.placeVoice(ctx, [0, 0, 0], lift);
+    const spots = (this.spots = { gearbox: spot(), diff: spot(), front: spot(), rear: spot(), spin: spot(), road: spot() });
+    this.place();
 
     // Transmission
     this.whine = ctx.createOscillator();
     this.whineGain = gainNode(0);
-    this.whine.connect(this.whineGain).connect(bus);
+    this.whine.connect(this.whineGain).connect(spots.gearbox.panner);
     this.whine.start();
     this.diff = ctx.createOscillator();
     this.diffGain = gainNode(0);
-    this.diff.connect(this.diffGain).connect(bus);
+    this.diff.connect(this.diffGain).connect(spots.diff.panner);
     this.diff.start();
 
     // Tires: a squeal is a few narrow, wandering resonances, part tone, part noise.
-    const squeal = (base: number): Squeal => {
+    const squeal = (base: number, out: AudioNode): Squeal => {
       const gain = gainNode(0);
       const osc = ctx.createOscillator();
       osc.type = 'triangle';
@@ -411,17 +470,18 @@ export class CarAudio {
       const bands = [filter('bandpass', base, 16), filter('bandpass', base * 1.62, 10), filter('bandpass', base * 2.4, 8)];
       const weights = [1, 0.55, 0.3];
       bands.forEach((b, i) => src.connect(b).connect(gainNode(weights[i] * 4)).connect(gain));
-      gain.connect(bus);
+      gain.connect(out);
       return { osc, bands, gain };
     };
-    this.rear = squeal(950);
-    this.front = squeal(720);
+    this.rear = squeal(950, spots.rear.panner);
+    this.front = squeal(720, spots.front.panner);
     this.spinFilter = filter('bandpass', 700, 1.6);
     this.spinGain = gainNode(0);
-    this.noiseSource(ctx).connect(this.spinFilter).connect(this.spinGain).connect(bus);
+    this.noiseSource(ctx).connect(this.spinFilter).connect(this.spinGain).connect(spots.spin.panner);
     this.roadFilter = filter('lowpass', 200, 0.6);
     this.roadGain = gainNode(0);
-    this.noiseSource(ctx).connect(this.roadFilter).connect(this.roadGain).connect(bus);
+    this.noiseSource(ctx).connect(this.roadFilter).connect(this.roadGain).connect(spots.road.panner);
+    // Wind is all around: not placed.
     this.windGain = gainNode(0);
     this.noiseSource(ctx).connect(filter('highpass', 500)).connect(filter('lowpass', 2800)).connect(this.windGain).connect(bus);
 
@@ -447,16 +507,72 @@ export class CarAudio {
   }
 
   /**
+   * A voice's place on the car, feeding `to`. Full level out to the listener's
+   * distance from the car, so the mix stays as tuned; past that (the far end
+   * of the car) it falls off gently.
+   */
+  private placeVoice(ctx: AudioContext, at: Vec3, to: AudioNode): Placed {
+    const panner = new PannerNode(ctx, {
+      distanceModel: 'inverse',
+      refDistance: AUDIO.listenDistance,
+      rolloffFactor: AUDIO.rolloff,
+    });
+    const eq = HRTF_EQ.map(([type, hz, q]) => filterNode(ctx, type, hz, q, 0));
+    let node: AudioNode = panner;
+    for (const f of eq) node = node.connect(f);
+    node.connect(to);
+    const p = { panner, eq, at };
+    this.applyOutput(p);
+    return p;
+  }
+
+  private applyOutput(p: Placed): void {
+    p.panner.panningModel = this.headphones ? 'HRTF' : 'equalpower';
+    for (const [i, f] of p.eq.entries()) f.gain.value = this.headphones ? HRTF_EQ[i][3] : 0;
+  }
+
+  /** Puts the transmission and tire voices where they are on this car. */
+  private place(): void {
+    const s = this.spots;
+    if (!s) return;
+    const spec = CARS[this.car];
+    const z = spec.chassis.cornerZ;
+    const driven = spec.drive === 'fwd' ? -z : z;
+    s.gearbox.at = SOUNDS[this.car].gearbox;
+    s.diff.at = [0, 0.35, driven];
+    s.front.at = [0, 0.1, -z];
+    s.rear.at = [0, 0.1, z];
+    s.spin.at = [0, 0.1, driven];
+    s.road.at = [0, 0.1, 0];
+  }
+
+  /** Headphones: 3D (HRTF). Speakers: plain level panning, since HRTF only colours the sound through speakers. */
+  setHeadphones(on: boolean): void {
+    this.headphones = on;
+    for (const p of this.placed()) this.applyOutput(p);
+  }
+
+  private placed(): Placed[] {
+    return [...(this.spots ? Object.values(this.spots) : []), ...(this.rig?.placed ?? [])];
+  }
+
+  /**
    * One car's engine. Each exhaust outlet: DC out, the pipe's resonance (a
    * delay loop: a boom at its fundamental, weaker overtones), the body EQ, a
-   * muffle that opens with load, light saturation and its place in the stereo
-   * image. Then the intake, the pops, and the turbo if it has one.
+   * muffle that opens with load, light saturation and its tailpipe. Then the
+   * intake, the pops, and the turbo if it has one.
    */
   private buildEngine(ctx: AudioContext, sound: CarSound): EngineRig {
     const filter = (type: BiquadFilterType, frequency: number, Q = 0.7, gain = 0) => filterNode(ctx, type, frequency, Q, gain);
     const gainNode = (v = 0) => gainOf(ctx, v);
     const out = gainNode(1);
     out.connect(this.bus);
+    const placed: Placed[] = [];
+    const spot = (at: Vec3, to: AudioNode) => {
+      const p = this.placeVoice(ctx, at, to);
+      placed.push(p);
+      return p.panner;
+    };
 
     const exhaustGain = gainNode(0);
     exhaustGain.connect(out);
@@ -469,21 +585,23 @@ export class CarAudio {
     };
     const bankIn: GainNode[] = [];
     const exhaustLow: BiquadFilterNode[] = [];
-    for (const [delay, pan] of sound.pipes) {
+    for (const [delay, at] of sound.pipes) {
       const input = gainNode(1);
       const low = filter('lowpass', 800, sound.muffle.q);
       const shaper = ctx.createWaveShaper();
       shaper.curve = saturation(sound.drive);
       shaper.oversample = '2x';
-      const panner = ctx.createStereoPanner();
-      panner.pan.value = pan;
       let node: AudioNode = input.connect(filter('highpass', sound.highpass)).connect(pipe(delay));
       for (const [hz, q, db] of sound.eq) node = node.connect(filter('peaking', hz, q, db));
-      node.connect(low).connect(shaper).connect(panner).connect(exhaustGain);
+      node.connect(low).connect(shaper).connect(spot(at, exhaustGain));
       bankIn.push(input);
       exhaustLow.push(low);
     }
 
+    // The voices that weren't panned before: see CENTRE_LIFT.
+    const lift = gainNode(CENTRE_LIFT);
+    lift.connect(out);
+    const bay = spot(sound.engineBay, lift);
     const I = sound.intake;
     const intakeIn = gainNode(1);
     const intakeTone = gainNode(I.tone);
@@ -497,13 +615,18 @@ export class CarAudio {
       shaper.curve = saturation(I.drive);
       intakeFilter.connect(shaper).connect(intakeGain);
     } else intakeFilter.connect(intakeGain);
-    intakeGain.connect(out);
+    intakeGain.connect(bay);
 
-    // Exhaust pops: sharp, bright, unmuffled.
+    // Exhaust pops: sharp, bright, unmuffled. One voice for every tailpipe, so between them.
     const popIn = gainNode(sound.pops.gain);
     const popShaper = ctx.createWaveShaper();
     popShaper.curve = saturation(3);
-    popIn.connect(filter('highpass', sound.pops.highpass)).connect(filter('peaking', sound.pops.presence, 0.8, 5)).connect(popShaper).connect(out);
+    const mid = (k: 0 | 1 | 2) => sound.pipes.reduce((sum, [, at]) => sum + at[k], 0) / sound.pipes.length;
+    popIn
+      .connect(filter('highpass', sound.pops.highpass))
+      .connect(filter('peaking', sound.pops.presence, 0.8, 5))
+      .connect(popShaper)
+      .connect(spot([mid(0), mid(1), mid(2)], lift));
 
     // Turbo whistle: a narrow band of noise around a faint tone, both following the shaft speed.
     let whistle: EngineRig['whistle'] = null;
@@ -516,11 +639,28 @@ export class CarAudio {
       const band = filter('bandpass', sound.turbo.whistle, 30);
       const src = this.noiseSource(ctx);
       src.connect(band).connect(gainNode(6)).connect(gain);
-      gain.connect(out);
+      gain.connect(bay);
       whistle = { osc, band, gain, src };
     }
 
-    const rig: EngineRig = { sound, out, node: null, fallback: [], bankIn, exhaustLow, exhaustGain, intakeIn, intakeFilter, intakeGain, intakeTone, popIn, whistle, dead: false };
+    const rig: EngineRig = {
+      sound,
+      out,
+      node: null,
+      fallback: [],
+      bankIn,
+      exhaustLow,
+      exhaustGain,
+      intakeIn,
+      intakeFilter,
+      intakeGain,
+      intakeTone,
+      popIn,
+      whistle,
+      bay,
+      placed,
+      dead: false,
+    };
     const fallback = () => {
       if (rig.dead) return;
       for (const [type, mix] of [
@@ -662,6 +802,17 @@ export class CarAudio {
     set(this.roadFilter.frequency, 140 + s.speed * 14, 0.1);
     set(this.roadGain.gain, Math.min(0.12, 0.005 + s.speed * 0.0022) * ground * smoothstep(0.5, 3, s.speed), 0.1);
     set(this.windGain.gain, 0.09 * Math.min(1.5, (s.speed / 50) ** 2), 0.2);
+
+    // Everything where it is on the car, turned as the car is to the view. The
+    // listener stays put (facing −z) and the car sits in front of it.
+    const cos = Math.cos(s.yaw);
+    const sin = Math.sin(s.yaw);
+    for (const { panner, at } of this.placed()) {
+      const [x, y, z] = at;
+      set(panner.positionX, x * cos + z * sin, 0.02);
+      set(panner.positionY, y - AUDIO.listenHeight, 0.02);
+      set(panner.positionZ, -x * sin + z * cos - AUDIO.listenDistance, 0.02);
+    }
   }
 
   private voice(v: Squeal, gain: number, f: number, t: number): void {
@@ -701,7 +852,7 @@ export class CarAudio {
     depth.gain.setValueAtTime(0.4, t);
     depth.gain.linearRampToValueAtTime(0, t + 0.35);
     lfo.connect(depth).connect(flutter.gain);
-    src.connect(band).connect(env).connect(flutter).connect(rig.out);
+    src.connect(band).connect(env).connect(flutter).connect(rig.bay);
     src.start(t, Math.random());
     lfo.start(t);
     src.stop(t + 0.7);
