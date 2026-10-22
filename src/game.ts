@@ -22,6 +22,7 @@ import { DriftScore } from './scoring';
 import { MPH, type Hud } from './ui';
 import { Collider } from './world/collider';
 import { PracticeWorld } from './world/practiceWorld';
+import { createSky } from './world/sky';
 import { TilesWorld } from './world/tilesWorld';
 import type { World } from './world/types';
 
@@ -106,6 +107,7 @@ export class Game {
     top: false,
     opts: {} as SpawnOptions,
   };
+  private readonly sky = createSky();
   private fps = 60;
   private menuWasOpen = false;
   private steerShown = 0;
@@ -221,6 +223,8 @@ export class Game {
       this.world.dispose();
     }
     this.world = world;
+    // The menu's plain backdrop until there's a world to put under the sky.
+    this.scene.background = this.sky;
     this.collider = new Collider(world);
     this.scene.add(world.root);
     this.debug.onWorld(world);
