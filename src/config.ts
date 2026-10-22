@@ -138,6 +138,7 @@ export const CAMERA = {
   forwardBias: 0.12,
 };
 
+// Read by the loaded world, which hot updates keep (main.ts): edits apply from the next place loaded.
 export const TILES = {
   errorTarget: 10,
   regionRadius: 110,

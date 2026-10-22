@@ -112,12 +112,14 @@ export class Game {
   private menuWasOpen = false;
   private steerShown = 0;
 
+  /** `prev`: the game this one replaces in a hot update, whose renderer it takes over (see restore). */
   constructor(
     canvas: HTMLCanvasElement,
     private readonly hud: Hud,
     private readonly cb: GameCallbacks,
+    prev?: Game,
   ) {
-    this.renderer = new WebGLRenderer({ canvas, antialias: true, stencil: true, powerPreference: 'high-performance' });
+    this.renderer = prev?.renderer ?? new WebGLRenderer({ canvas, antialias: true, stencil: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
 
@@ -348,6 +350,79 @@ export class Game {
 
   get canResume(): boolean {
     return this.phase === 'paused';
+  }
+
+  // --- Hot updates (dev only, see main.ts) --------------------------------------
+
+  /**
+   * Shuts this game down for a hot update, all but the renderer and the world:
+   * the next game takes those over (restore), so no tile is fetched twice.
+   */
+  detach(): void {
+    this.renderer.setAnimationLoop(null);
+    if (this.world) this.scene.remove(this.world.root);
+    this.audio.dispose();
+    this.debug.dispose();
+    this.car.dispose();
+    this.effects.dispose();
+    this.sky.dispose();
+  }
+
+  /**
+   * Picks up where `prev`, the game before a hot update, left off: its world,
+   * and the car, camera, map and debug tools as they stood. `prev` may be built
+   * from older versions of these modules; only long-standing fields are read.
+   */
+  restore(prev: Game): void {
+    const D = prev.debug;
+    this.debug.set({ ...D.layers, open: D.open });
+    this.debug.setTab(D.tab);
+    if (prev.audio.muted) this.audio.toggleMute();
+    this.minimap.adopt(prev.minimap);
+    const old = prev.physics;
+    this.setCar(old.car.id);
+    // Unsaved tuning would be lost with the old editor; saved, the preset reloads with any edits to the stock cars.
+    if (D.tuning.dirty) {
+      this.physics.setCar(this.debug.tuning.load(old.car.id, D.tuning.spec));
+      this.applyCar();
+    }
+
+    const world = prev.world;
+    if (!world) return;
+    this.setWorld(world);
+    // After setWorld, which puts the clock back to normal.
+    this.debug.setTimeScale(D.timeScale);
+    this.hud.setGoogleBranding(world.kind === 'tiles');
+    if (prev.phase === 'idle') {
+      this.cb.onMenu();
+    } else if (prev.phase === 'locating') {
+      this.spawnHeading = prev.spawnHeading;
+      this.locate = prev.locate;
+      this.phase = 'locating';
+      this.hud.showLoading(`Flying to ${this.locate.name}…`, 0);
+      this.hud.show(false);
+    } else {
+      this.spawn(old.pos, old.heading);
+      const P = this.physics;
+      P.launch(old.vForward);
+      P.vel.copy(old.vel);
+      P.vy = old.vy;
+      P.yawRate = old.yawRate;
+      P.drivetrain.mode = old.drivetrain.mode;
+      P.drivetrain.gear = old.drivetrain.gear;
+      this.spawnPos.copy(prev.spawnPos);
+      this.spawnHeading = prev.spawnHeading;
+      this.crumbs = prev.crumbs;
+      this.score.total = prev.score.total;
+      const c = this.chase;
+      const o = prev.chase;
+      c.snap(o.target, o.yaw, o.distance, o.pitch);
+      c.zoom = o.zoom;
+      c.pitchPreset = o.pitchPreset;
+      c.orbitYaw = o.orbitYaw;
+      c.orbitPitch = o.orbitPitch;
+      if (prev.phase === 'paused') this.pause();
+    }
   }
 
   // --- Frame ---------------------------------------------------------------

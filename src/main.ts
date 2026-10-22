@@ -1,3 +1,5 @@
+// First, so it sees the page before any game code touches it.
+import { resetPage } from './hot';
 import './style.css';
 import { type CarId, DEFAULT_CAR, isCarId } from './car/cars';
 import { Game, type SpawnOptions } from './game';
@@ -36,6 +38,25 @@ function linkedCar(): CarId | null {
   return isCarId(car) ? car : null;
 }
 
+// Hot updates (dev): an edit re-runs this module with fresh copies of the
+// edited modules, and the new game takes over the old one's renderer and
+// world (Game.restore). Reloading the page instead would start a new, billed
+// Map Tiles session and fetch every tile again. Edits to the world's own code
+// still reload the page (vite.config.ts).
+const prev = import.meta.hot?.data.game as Game | undefined;
+let built: Game | null = null;
+if (import.meta.hot) {
+  import.meta.hot.accept();
+  import.meta.hot.dispose((data) => {
+    // A run that failed part-way may have no game: the last good one's world carries on.
+    if (built) {
+      built.detach();
+      data.game = built;
+    }
+    resetPage();
+  });
+}
+
 let apiKey = readKey();
 const hud = new Hud();
 
@@ -64,7 +85,8 @@ const game = new Game(document.getElementById('view') as HTMLCanvasElement, hud,
       game.resume();
     }
   },
-});
+}, prev);
+built = game;
 
 const menu = new Menu({
   onPlace(lat, lon, bearing, name, top = false, height) {
@@ -147,11 +169,16 @@ window.addEventListener('keydown', (e) => {
 // either with [&car=hatch|muscle].
 // With no link, drop straight into the default spot; Esc opens the menu.
 // ?debug[=wire,probes,…] opens the debug panel.
+// After a hot update, carry on where the last game was instead.
 const params = new URLSearchParams(location.search);
 const lat = Number(params.get('lat'));
 const lon = Number(params.get('lon'));
-if (params.has('debug')) game.debug.applyParam(params.get('debug') ?? '');
-if (params.has('practice')) {
+if (!prev && params.has('debug')) game.debug.applyParam(params.get('debug') ?? '');
+if (prev) {
+  menu.hide();
+  game.restore(prev);
+  menu.setCar(game.carId);
+} else if (params.has('practice')) {
   menu.hide();
   game.startPractice();
 } else if (apiKey && params.has('lat') && params.has('lon') && Number.isFinite(lat) && Number.isFinite(lon)) {

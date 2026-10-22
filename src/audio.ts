@@ -763,6 +763,13 @@ export class CarAudio {
   suspend(): void {
     void this.ctx?.suspend();
   }
+
+  /** Stops for good (the game is being replaced by a hot update). */
+  dispose(): void {
+    void this.ctx?.close();
+    this.ctx = null;
+    this.rig = null;
+  }
 }
 
 /** Stops and unhooks a swapped-out engine. */

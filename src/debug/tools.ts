@@ -52,6 +52,7 @@ export class DebugTools {
   private perf = { frames: 0, frameMs: 0, frameMax: 0, physMs: 0, renderMs: 0 };
   private lastLog: TraceEvent | null = null;
   private lastLogText = '';
+  private restoreConsole = () => {};
 
   constructor(
     private readonly ctx: DebugContext,
@@ -78,6 +79,13 @@ export class DebugTools {
     this.panel.sync(this.layers, this.timeScale);
     this.panel.show(this.open);
     this.captureConsole();
+  }
+
+  /** Unhooks from the console and the scene (the game is being replaced by a hot update). */
+  dispose(): void {
+    this.restoreConsole();
+    this.overlay.root.removeFromParent();
+    this.overlay.dispose();
   }
 
   // --- Scripting surface ----------------------------------------------------
@@ -355,11 +363,12 @@ export class DebugTools {
       this.lastLogText = text;
       this.lastLog = this.recorder.event('log', { level, message: text });
     };
+    const orig = { warn: console.warn, error: console.error };
+    this.restoreConsole = () => Object.assign(console, orig);
     for (const level of ['warn', 'error'] as const) {
-      const orig = console[level].bind(console);
       console[level] = (...args: unknown[]) => {
         record(level, args);
-        orig(...args);
+        orig[level].apply(console, args);
       };
     }
     window.addEventListener('error', (e) => record('uncaught', [e.error ?? e.message]));

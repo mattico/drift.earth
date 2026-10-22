@@ -234,12 +234,15 @@ export class TuningEditor {
 
   // --- API (also `__drift.debug.tuning`) ------------------------------------------
 
-  /** Makes `base`'s active preset current and returns the working copy to drive on. */
-  load(base: CarId): CarSpec {
+  /**
+   * Makes `base`'s active preset current and returns the working copy to drive
+   * on: a fresh one, or `working` (unsaved edits carried over a hot update).
+   */
+  load(base: CarId, working?: CarSpec): CarSpec {
     this.base = base;
     this.preset = this.store.activeFor(base);
     this.stock = stockPreset(base);
-    this.spec = presetSpec(this.preset);
+    this.spec = working ?? presetSpec(this.preset);
     this.clearMsg();
     this.render();
     this.h.event('preset', { ...this.describe(), why: 'car' });

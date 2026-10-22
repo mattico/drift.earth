@@ -83,6 +83,20 @@ export class Minimap {
     );
   }
 
+  /** Takes over another map's key, session, tiles and copyright (a hot update), so none are fetched again. */
+  adopt(from: Minimap): void {
+    this.root.hidden = from.root.hidden;
+    this.key = from.key;
+    this.session = from.session;
+    this.failed = from.failed;
+    for (const [id, t] of from.tiles) this.tiles.set(id, t);
+    this.viewM = from.viewM;
+    this.zoom = from.zoom;
+    this.copyrightAt = from.copyrightAt;
+    this.copyrightView = from.copyrightView;
+    this.copyEl.textContent = from.copyEl.textContent;
+  }
+
   /**
    * Draws the map around `lat`/`lon`. `viewBearing` (radians clockwise from
    * north) points up; the car arrow points along `carBearing`; `speed` in m/s

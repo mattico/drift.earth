@@ -12,6 +12,8 @@ pnpm dev          # http://localhost:5173
 pnpm build        # type-check + production build into dist/
 ```
 
+Code edits hot-update without reloading the page: the new code takes over the loaded world, so the tiles aren't fetched (or billed) again, and the car, camera, menu, minimap, debug panel and unsaved tuning carry on where they were. Edits to the world's own code (`tilesWorld.ts`, `practiceWorld.ts`, `meshBounds.ts`, `hot.ts`) still reload the page, and `TILES` numbers in `config.ts` apply from the next place loaded.
+
 ### API key
 
 Put a Google Maps Platform key in `.env`:
@@ -130,7 +132,8 @@ Browsers only start audio after a key press or click; a gamepad button doesn't c
 
 ```
 src/
-  main.ts            boot, API key, deep links, menu wiring
+  main.ts            boot, API key, deep links, menu wiring, hot updates
+  hot.ts             dev only: clears the page between hot updates
   audio.ts           synthesized engine (AudioWorklet), transmission, tyres, road and wind
   game.ts            phases (locating → driving ⇄ paused), fly-in spawn, fixed-step loop, rebasing
   camera.ts          top-down chase camera

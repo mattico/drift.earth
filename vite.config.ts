@@ -62,6 +62,24 @@ function traceSink(key: string | undefined): Plugin {
 }
 
 /**
+ * Hot updates hand the loaded world on to the new game (src/main.ts), so an
+ * edit to the code the world itself runs would never take effect: those, and
+ * src/hot.ts, reload the page instead.
+ */
+function reloadWorldCode(): Plugin {
+  const reloads = /\/src\/(hot|world\/(tilesWorld|practiceWorld|meshBounds))\.ts$/;
+  return {
+    name: 'drift-reload-world',
+    apply: 'serve',
+    hotUpdate({ file }) {
+      if (this.environment.name !== 'client' || !reloads.test(file)) return;
+      this.environment.hot.send({ type: 'full-reload' });
+      return [];
+    },
+  };
+}
+
+/**
  * Public path the build is served from. GitHub Pages serves a project site
  * under /<repo>/, so the deploy workflow passes configure-pages' base_path as
  * BASE_PATH ("/drift.earth", or "" for a custom domain). Vite wants leading
@@ -93,6 +111,6 @@ function siteUrl(): Plugin {
 export default defineConfig(({ mode }) => ({
   base: basePath(),
   envPrefix: ['VITE_', 'MAPS_'],
-  plugins: [traceSink(loadEnv(mode, process.cwd(), '').MAPS_API_KEY), siteUrl()],
+  plugins: [traceSink(loadEnv(mode, process.cwd(), '').MAPS_API_KEY), siteUrl(), reloadWorldCode()],
   server: { watch: { ignored: ['**/traces/**'] } },
 }));

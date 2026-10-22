@@ -62,8 +62,7 @@ export class TilesWorld implements World {
   private attributionAge = Infinity;
   private minLeafError = Infinity;
   private readonly renderer: WebGLRenderer;
-  private readonly camera: PerspectiveCamera;
-  private readonly onResize = () => this.tiles.setResolutionFromRenderer(this.camera, this.renderer);
+  private camera: PerspectiveCamera;
 
   constructor(opts: TilesWorldOptions) {
     this.camera = opts.camera;
@@ -97,7 +96,6 @@ export class TilesWorld implements World {
 
     tiles.setCamera(opts.camera);
     tiles.setResolutionFromRenderer(opts.camera, opts.renderer);
-    window.addEventListener('resize', this.onResize);
 
     tiles.addEventListener('load-model', ({ scene, tile }) => this.onLoadModel(scene, tile));
     tiles.addEventListener('dispose-model', ({ scene }) => this.meshesByScene.delete(scene));
@@ -181,6 +179,15 @@ export class TilesWorld implements World {
   }
 
   update(camera: PerspectiveCamera, focus: Vector3, velocity: Vector3): void {
+    // A hot update (main.ts) hands this world to a new game with its own camera.
+    if (camera !== this.camera) {
+      this.tiles.deleteCamera(this.camera);
+      this.tiles.setCamera(camera);
+      this.camera = camera;
+    }
+    // Each frame rather than on resize: a no-op unless the size changed, and no
+    // page listener for a hot update to strip.
+    this.tiles.setResolutionFromRenderer(camera, this.renderer);
     const g = this.tiles.group;
     this.region.sphere.center
       .copy(velocity)
@@ -261,7 +268,6 @@ export class TilesWorld implements World {
 
   dispose(): void {
     clearTimeout(this.recoveryTimer);
-    window.removeEventListener('resize', this.onResize);
     this.tiles.dispose();
     this.draco.dispose();
   }
