@@ -712,6 +712,9 @@ export class CarAudio {
     const rig = this.rig;
     if (rig) gains.push(rig.exhaustGain, rig.intakeGain, ...(rig.whistle ? [rig.whistle.gain] : []));
     for (const g of gains) g.gain.setTargetAtTime(0, t, 0.05);
+    // The pops have their own output, past the exhaust gain: stop the worklet firing them.
+    this.crackle = 0;
+    rig?.node?.parameters.get('pops')!.setValueAtTime(0, t);
   }
 
   update(s: AudioState, dt: number): void {
