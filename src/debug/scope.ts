@@ -102,11 +102,11 @@ const LANES: Record<LaneId, LaneDef> = {
       const c = car.chassis;
       const peak = c.peakSlipAngle * DEG;
       const out: Ref[] = [
-        { v: peak, label: 'peak', dash: false },
+        { v: peak, label: 'peak (asphalt)', dash: false },
         { v: -peak, label: '', dash: false },
       ];
       if (c.stabilitySlip !== undefined && Math.abs(c.stabilitySlip - c.peakSlipAngle) > 1e-4) {
-        out.push({ v: c.stabilitySlip * DEG, label: 'ESC', dash: true }, { v: -c.stabilitySlip * DEG, label: '', dash: true });
+        out.push({ v: c.stabilitySlip * DEG, label: 'ESC (asphalt)', dash: true }, { v: -c.stabilitySlip * DEG, label: '', dash: true });
       }
       return out;
     },

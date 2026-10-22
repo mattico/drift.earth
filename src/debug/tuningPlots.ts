@@ -7,7 +7,7 @@
 import { MathUtils } from 'three';
 import type { CarSpec, ChassisSpec, DrivetrainSpec } from '../car/cars';
 import { torqueAt } from '../car/drivetrain';
-import { tireCurve, type CarPhysics } from '../car/physics';
+import { tireCurve, type AxleSurface, type CarPhysics } from '../car/physics';
 import { MPH } from '../ui';
 import './tuningPlots.css';
 
@@ -214,7 +214,7 @@ function tirePlot(spec: () => CarSpec): TuningPlot {
   pair.append(lat.box, lon.box);
   const key = el('div', 'tun-plot-key');
   const liveKey = el('span', 'tun-live-key');
-  liveKey.title = 'Slip angle and cornering force ÷ load now, front and rear';
+  liveKey.title = 'Slip angle and cornering force ÷ load now, front and rear (off asphalt, with how the surface scales the curves)';
   plot.append(pair, key);
   const trailF = new Trail('tpl-f');
   const trailR = new Trail('tpl-r');
@@ -295,7 +295,13 @@ function tirePlot(spec: () => CarSpec): TuningPlot {
       place(dotR, xR, yR);
       trailF.push(time, xF, yF);
       trailR.push(time, xR, yR);
-      liveKey.textContent = `now F ${aF.toFixed(1)}° ${gripF.toFixed(2)} · R ${aR.toFixed(1)}° ${gripR.toFixed(2)}`;
+      // The curves are asphalt's: off it, say how the ground scales them (grip down, peak later).
+      const [gF, gR] = phys.axleSurface;
+      const ground = (g: AxleSurface) => `grip ×${g.grip.toFixed(2)}, peak ×${g.peakSlip.toFixed(1)}`;
+      const off = gF.grip !== 1 || gF.peakSlip !== 1 || gR.grip !== 1 || gR.peakSlip !== 1;
+      liveKey.textContent =
+        `now F ${aF.toFixed(1)}° ${gripF.toFixed(2)} · R ${aR.toFixed(1)}° ${gripR.toFixed(2)}` +
+        (off ? ` · surface F ${ground(gF)}, R ${ground(gR)}` : '');
     },
   };
   return p;

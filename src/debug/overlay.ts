@@ -769,9 +769,11 @@ export class DebugOverlay {
     const vF = p.vel.x * fx + p.vel.z * fz;
     const vL = p.vel.x * lx + p.vel.z * lz;
     const r = p.yawRate;
-    const peak = ch.peakSlipAngle;
-    this.slipWedge(frontX, y - 0.05, frontZ, p.steer, vF, vL + a * r, peak, false);
-    this.slipWedge(rearX, y - 0.05, rearZ, 0, vF, vL - b * r, peak, true);
+    // Each axle's peak on the ground under it, as axleTire scales it: tan(peak) × the surface's peakSlip.
+    const tanPeak = Math.tan(ch.peakSlipAngle);
+    const [gF, gR] = p.axleSurface;
+    this.slipWedge(frontX, y - 0.05, frontZ, p.steer, vF, vL + a * r, Math.atan(tanPeak * gF.peakSlip), false);
+    this.slipWedge(rearX, y - 0.05, rearZ, 0, vF, vL - b * r, Math.atan(tanPeak * gR.peakSlip), true);
 
     const weight = 9.81 * ch.mass;
     this.loadBar(frontX, frontZ, p.groundY + LOAD_BASE, t.loadF / ((weight * b) / ch.wheelbase));

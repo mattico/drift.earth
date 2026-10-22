@@ -151,13 +151,15 @@ export class Gauges {
     const d = this.tires.data;
     const o = this.tires.push();
     // The front in the road wheels' frame, so its ellipse is the tire's own.
-    const kF = 1 / (c.muFront * Math.max(t.loadF, 1));
+    // Each ring is the axle's grip on the ground under it: μ × surface grip × load.
+    const [gF, gR] = p.axleSurface;
+    const kF = 1 / (c.muFront * gF.grip * Math.max(t.loadF, 1));
     const cs = Math.cos(p.steer);
     const sn = Math.sin(p.steer);
     d[o] = (t.forceF[0] * cs + t.forceF[1] * sn) * kF;
     d[o + 1] = (-t.forceF[0] * sn + t.forceF[1] * cs) * kF;
     d[o + 2] = t.slideF > 0 ? 1 : 0;
-    const kR = 1 / (Math.max(c.muRear, c.muRearSide) * Math.max(t.loadR, 1));
+    const kR = 1 / (Math.max(c.muRear, c.muRearSide) * gR.grip * Math.max(t.loadR, 1));
     d[o + 3] = t.forceR[0] * kR;
     d[o + 4] = t.forceR[1] * kR;
     d[o + 5] = t.slideR > 0 ? 1 : 0;

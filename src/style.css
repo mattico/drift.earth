@@ -1192,6 +1192,10 @@ body.gamepad .suggestions li:focus {
   font-size: 22px;
   touch-action: manipulation;
 }
+/* Held for the nearest road: a drifting thumb mustn't turn into a pan that cancels it. */
+.touch-top .touch-reset {
+  touch-action: none;
+}
 .touch-stick {
   pointer-events: auto;
   width: 200px;

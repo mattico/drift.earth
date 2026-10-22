@@ -185,7 +185,7 @@ export class InputManager {
     stick.addEventListener('pointerup', release);
     stick.addEventListener('pointercancel', release);
 
-    const hold = (sel: string, set: (v: boolean) => void) => {
+    const hold = (sel: string, set: (v: boolean) => void, cancel?: () => void) => {
       const el = root.querySelector<HTMLElement>(sel)!;
       el.addEventListener('pointerdown', (e) => {
         el.setPointerCapture(e.pointerId);
@@ -197,12 +197,16 @@ export class InputManager {
         set(false);
       };
       el.addEventListener('pointerup', up);
-      el.addEventListener('pointercancel', up);
+      el.addEventListener('pointercancel', () => {
+        cancel?.();
+        up();
+      });
     };
     hold('.touch-gas', (v) => (this.touch.throttle = v ? 1 : 0));
     hold('.touch-brake', (v) => (this.touch.brake = v ? 1 : 0));
     hold('.touch-drift', (v) => (this.touch.handbrake = v));
-    hold('.touch-reset', (v) => (this.touch.reset = v));
+    // A press the browser cancels (it took the touch for a gesture) is neither a tap nor a hold.
+    hold('.touch-reset', (v) => (this.touch.reset = v), () => (this.resetHold.spent = true));
     root.querySelector('.touch-menu')!.addEventListener('click', () => (this.touch.pause = true));
   }
 

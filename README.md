@@ -12,7 +12,7 @@ pnpm dev          # http://localhost:5173
 pnpm build        # type-check + production build into dist/
 ```
 
-Code edits hot-update without reloading the page: the new code takes over the loaded world, so the tiles aren't fetched (or billed) again, and the car, camera, menu, minimap, debug panel and unsaved tuning carry on where they were. Edits to the world's own code (`tilesWorld.ts`, `practiceWorld.ts`, `meshBounds.ts`, `hot.ts`) still reload the page, and `TILES` numbers in `config.ts` apply from the next place loaded.
+Code edits hot-update without reloading the page: the new code takes over the loaded world, so the tiles aren't fetched (or billed) again, and the car, camera, menu, minimap, debug panel and unsaved tuning carry on where they were. Edits to the world's own code (`tilesWorld.ts`, `practiceWorld.ts`, `meshBounds.ts`, `osmRoads.ts`, `osmSurface.ts`, `roads.ts`, `hot.ts`) still reload the page, and `TILES` numbers in `config.ts` apply from the next place loaded.
 
 ### API key
 
@@ -260,13 +260,13 @@ The camera pulls back with speed, up to 140 m. The scroll wheel scales the dista
 - **Contacts** leaves a marker wherever the car hit a wall (red) or stopped at an edge (orange ledge, blue drop).
 - **Classifier** shows the overpass and car-blob tests' samples along recent wall hits: skirt samples in yellow, far-side samples in cyan, the deck start as a white cross, and magenta, teal or red for overpass, car blob or wall.
 - **Tires** draws each axle's tire force (1 m per kN; green while gripping, orange while sliding), the front wheels' heading (cyan) and the car's velocity (white). The stats under the buttons give the slip angles, axle loads, rear wheel speed and road-wheel angle. It also shows:
-  - a slip wedge at each axle, from where the wheels point to where the contact patch is travelling: green well under the tire's peak slip angle, amber near it, red past it (the rear one is drawn behind the car, so the body doesn't hide it);
+  - a slip wedge at each axle, from where the wheels point to where the contact patch is travelling: green well under the tire's peak slip angle on the surface under that axle, amber near it, red past it (the rear one is drawn behind the car, so the body doesn't hide it);
   - a load bar over each axle against its static load (white tick), showing weight transfer under braking and throttle;
   - the arc the car is on (radius = speed ÷ yaw rate), with its centre marked within 60 m;
   - a band round the centre of mass from the body's heading to its velocity, ticked every 10°: the drift angle.
 - **Trail** draws the last 18 s of driving on the ground, each stretch coloured by the first of these that applied: airborne, stability control, ABS, traction control, both axles / rear / front sliding, drifting on gripping tires, or plain grip.
 - **Gauges** puts a live telemetry cluster at the top right, which stays up with the panel closed:
-  - friction circles for each axle: the grip ellipse from μ × load, the force now with a 1 s trail, and the share of grip in use;
+  - friction circles for each axle: the grip ellipse from μ × surface grip × load, the force now with a 1 s trail, and the share of grip in use;
   - a 10 s g-g diagram;
   - the steering input against the rate-limited command and the actual road-wheel angle over the last 2 s, and the raw pedals beside what the car took from them;
   - ABS, TC and ESC lamps, stability control's re-arm countdown and a drift light;
@@ -297,7 +297,7 @@ Presets are stored in the browser (`localStorage`); export them to keep or share
 
 ### Telemetry (the panel's **Scope** tab)
 
-- **Strip charts** of the last 5, 10 or 30 s of the trace. Pick a channel preset (Balance, Steering, Grip, Aids, Drivetrain, Pedals, Forces) or any channels. Values show in display units, with the peak slip angle, stability control's slip allowance and the redline drawn in. Hover to read every channel at that moment; with time frozen, hover to scrub.
+- **Strip charts** of the last 5, 10 or 30 s of the trace. Pick a channel preset (Balance, Steering, Grip, Aids, Drivetrain, Pedals, Forces) or any channels. Values show in display units, with the peak slip angle and stability control's slip allowance on asphalt (looser surfaces peak later) and the redline drawn in. Hover to read every channel at that moment; with time frozen, hover to scrub.
 - **Pin** keeps the window as a dashed ghost (up to five), to compare a change in the Tuning tab against the run before it.
 - **Tests** drives scripted manoeuvres: step steer, sine with dwell, J-turn, 0–100 km/h, 100–0 and a ramp steer.
   - They are timed in physics steps, so slow motion and stepping still work.
