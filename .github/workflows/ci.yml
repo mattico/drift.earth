@@ -68,6 +68,8 @@ jobs:
         env:
           PAGES_BASE: ${{ steps.pages.outputs.base_path }}
           REPO: ${{ github.event.repository.name }}
+          # The site's address, for the link-preview tags (absolute URLs).
+          SITE_URL: ${{ steps.pages.outputs.base_url }}
           MAPS_API_KEY: ${{ env.DEPLOY == 'true' && secrets.MAPS_API_KEY || '' }}
           VITE_GOOGLE_MAPS_KEY: ''
 

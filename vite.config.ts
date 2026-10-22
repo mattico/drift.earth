@@ -72,12 +72,27 @@ function basePath(): string {
   return path ? `/${path}/` : '/';
 }
 
+/**
+ * Fills `__SITE__` in index.html with the site's address, for the link-preview
+ * tags (og:image and the like), which scrapers only follow as absolute URLs.
+ * The deploy passes configure-pages' base_url as SITE_URL; without it (dev,
+ * PR builds) the base path stands in.
+ */
+function siteUrl(): Plugin {
+  const site = process.env.SITE_URL ? `${process.env.SITE_URL.replace(/\/+$/, '')}/` : basePath();
+  return {
+    name: 'drift-site-url',
+    transformIndexHtml: (html) => html.replaceAll('__SITE__', site),
+  };
+}
+
 // `.env` holds the key as MAPS_API_KEY; expose that prefix to client code
 // alongside Vite's default VITE_ prefix. Whatever it holds is inlined into a
-// production build, so CI builds without one (tools/check-no-key.mjs).
+// production build: CI deploys build in the referrer-restricted MAPS_API_KEY
+// secret and nothing else (tools/check-no-key.mjs).
 export default defineConfig(({ mode }) => ({
   base: basePath(),
   envPrefix: ['VITE_', 'MAPS_'],
-  plugins: [traceSink(loadEnv(mode, process.cwd(), '').MAPS_API_KEY)],
+  plugins: [traceSink(loadEnv(mode, process.cwd(), '').MAPS_API_KEY), siteUrl()],
   server: { watch: { ignored: ['**/traces/**'] } },
 }));

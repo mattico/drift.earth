@@ -39,6 +39,8 @@ CI (`.github/workflows/ci.yml`) type-checks, runs `pnpm handling` and builds on 
 
 The site appears at `https://<you>.github.io/<repo>/`; `BASE_PATH` sets the path the build is served from (CI takes it from the Pages settings, and it is `/` by default).
 
+Link previews (Open Graph and Twitter cards in `index.html`) show `public/og.jpg`, a 1200×630 shot of the hot hatch drifting on the practice track. Scrapers need absolute URLs, so the build fills in the site's address from `SITE_URL`, which CI sets from the Pages settings.
+
 `pnpm check:key` fails if `dist/` contains any API key other than the one it is told to expect (`ALLOWED_KEY`, which CI sets to the secret), and never prints a key. A local `pnpm build` builds in the key from `.env`, so don't publish a local `dist/` by hand. To build without it, run `MAPS_API_KEY= VITE_GOOGLE_MAPS_KEY= pnpm build`, or in PowerShell 7 `$env:MAPS_API_KEY=''; $env:VITE_GOOGLE_MAPS_KEY=''; pnpm build` (Windows PowerShell 5.1 deletes a variable set to `''`, so `.env` would win; `pnpm check:key` catches that).
 
 ### Deep links

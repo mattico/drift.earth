@@ -2,3 +2,8 @@
 node_modules
 dist
 traces
+# Agent worktrees (Claude Code)
+.claude/worktrees/
+# Local-only files: .env.local, settings.local.json and the like
+*.local
+*.local.*
