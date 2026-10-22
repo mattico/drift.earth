@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>drift.earth</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2214%22 fill=%22%23ff4d3d%22/%3E%3Cpath d=%22M9 20c4-9 10-9 14-8%22 stroke=%22%23fff%22 stroke-width=%223%22 fill=%22none%22 stroke-linecap=%22round%22/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+
+    <div id="hud" hidden>
+      <div class="score panel-lite">
+        <div class="score-total"><span id="score-total">0</span><small>pts</small></div>
+        <div class="score-best">best <span id="score-best">0</span></div>
+      </div>
+      <div id="combo" class="combo" hidden>
+        <div class="combo-points" id="combo-points">0</div>
+        <div class="combo-meta"><span id="combo-mult">×1</span> · <span id="combo-angle">0°</span></div>
+      </div>
+      <div id="toast" class="toast" hidden></div>
+      <div class="speedo panel-lite">
+        <div class="speedo-value" id="speed">0</div>
+        <div class="speedo-unit">km/h</div>
+      </div>
+      <div id="status" class="status" hidden></div>
+      <div class="hints panel-lite" id="hints">
+        <b>W/S</b> gas · brake/reverse &nbsp; <b>A/D</b> steer &nbsp; <b>Space</b> handbrake<br />
+        <b>R</b> reset &nbsp; <b>C</b> camera &nbsp; <b>wheel/+/-</b> zoom &nbsp; <b>M</b> mute &nbsp; <b>F3</b> debug &nbsp; <b>Esc</b> menu
+      </div>
+    </div>
+
+    <div id="touch" class="touch" hidden>
+      <div class="touch-top">
+        <button class="touch-menu" type="button" aria-label="Menu">☰</button>
+        <button class="touch-reset" type="button" aria-label="Reset car">⟲</button>
+      </div>
+      <div class="touch-stick"><div class="touch-knob"></div></div>
+      <div class="touch-buttons">
+        <button class="touch-drift" type="button">DRIFT</button>
+        <button class="touch-brake" type="button">BRAKE</button>
+        <button class="touch-gas" type="button">GAS</button>
+      </div>
+    </div>
+
+    <footer class="attribution">
+      <img src="/google-maps-logo.svg" alt="Google Maps" class="gmaps-logo" id="gmaps-logo" hidden />
+      <span id="attribution-text"></span>
+    </footer>
+
+    <div id="loading" class="loading" hidden>
+      <div class="loading-title" id="loading-title">Flying in…</div>
+      <div class="loading-bar"><div id="loading-fill"></div></div>
+      <div class="loading-sub" id="loading-sub">Streaming Google Photorealistic 3D Tiles</div>
+    </div>
+
+    <div id="menu" class="menu">
+      <div class="panel menu-panel">
+        <header class="brand">
+          <h1>drift<span>.earth</span></h1>
+          <p>Drift anywhere on a photorealistic planet.</p>
+        </header>
+
+        <div id="resume-row" class="resume-row" hidden>
+          <button id="resume" class="btn primary" type="button">Resume</button>
+          <button id="respawn" class="btn" type="button">Respawn here</button>
+        </div>
+
+        <div id="key-row" class="key-row" hidden>
+          <label for="api-key">Google Maps Platform API key (Map Tiles API)</label>
+          <div class="field-row">
+            <input id="api-key" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false" />
+            <button id="save-key" class="btn" type="button">Save</button>
+          </div>
+        </div>
+
+        <div class="search">
+          <input id="search" type="search" placeholder="Search a place, or paste “lat, lng” / a Google Maps link" autocomplete="off" />
+          <div id="suggestions" class="suggestions" hidden>
+            <ul id="suggestion-list"></ul>
+            <div class="suggestions-attribution"><img src="/google-maps-logo.svg" alt="Google Maps" /></div>
+          </div>
+          <div id="search-error" class="search-error" hidden></div>
+        </div>
+
+        <div class="spots" id="spots"></div>
+
+        <div class="menu-footer">
+          <button id="practice" class="btn ghost" type="button">Practice track (no map)</button>
+          <button id="debug-tools" class="btn ghost" type="button">Debug tools</button>
+          <span id="menu-error" class="menu-error" hidden></span>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "name": "drift.earth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Arcade drifting on Google Photorealistic 3D Tiles",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && tsc -p tsconfig.node.json && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc && tsc -p tsconfig.node.json",
+    "capture": "node tools/capture.mjs",
+    "trace:report": "node tools/trace-report.mjs"
+  },
+  "license": "ISC",
+  "packageManager": "pnpm@10.29.3",
+  "dependencies": {
+    "3d-tiles-renderer": "^0.5.3",
+    "three": "^0.186.1",
+    "three-mesh-bvh": "0.9.15"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/three": "^0.186.0",
+    "playwright-core": "^1.64.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}
