@@ -28,6 +28,7 @@ import { TILES } from '../config';
 import type { SurfaceId } from '../car/surfaces';
 import { overlapsColumn, worldBox } from './meshBounds';
 import { OSM_ATTRIBUTION, OsmRoads } from './osmRoads';
+import { OsmSurface } from './osmSurface';
 import type { RoadNetwork } from './roads';
 import type { Geo, RebaseResult, World, WorldStatus } from './types';
 
@@ -46,7 +47,13 @@ const ROAD_UPDATE_FRAMES = 15;
  * from kilometres up.
  */
 const ROAD_HEIGHT_TOLERANCE = 50;
+/**
+ * Time (ms) a frame may spend rasterising the surface map. A dense city tile
+ * takes longer than a frame has, so it's spread over several.
+ */
+const SURFACE_BUDGET = 3;
 const _geo = new Vector3();
+const _unproject = new Vector3();
 
 export interface TilesWorldOptions {
   apiKey: string;
@@ -77,6 +84,7 @@ export class TilesWorld implements World {
   private readonly renderer: WebGLRenderer;
   private camera: PerspectiveCamera;
   private readonly osm: OsmRoads;
+  private readonly surface: OsmSurface;
   /** Ellipsoidal height (m) the roads are projected at. */
   private roadHeight = 0;
   private roadAge = Infinity;
@@ -124,6 +132,7 @@ export class TilesWorld implements World {
       const p = this.fromGeo({ lat, lon, height: this.roadHeight }, _geo);
       return [p.x, p.z];
     });
+    this.surface = new OsmSurface(this.osm);
   }
 
   get roads(): RoadNetwork | null {
@@ -232,7 +241,10 @@ export class TilesWorld implements World {
         this.osm.reproject();
       }
       this.osm.update(geo.lat, geo.lon);
+      this.surface.sync();
+      this.reframeSurface(focus);
     }
+    this.surface.work(SURFACE_BUDGET);
 
     this.attributionAge++;
     if (this.attributionAge > 30) {
@@ -256,6 +268,7 @@ export class TilesWorld implements World {
     const yaw = new Euler().setFromQuaternion(dq, 'YXZ').y;
     this.epoch++;
     this.osm.reproject();
+    this.reframeSurface(p.clone().applyMatrix4(matrix));
     return { matrix, yaw };
   }
 
@@ -276,12 +289,13 @@ export class TilesWorld implements World {
   debugInfo(): string {
     const s = (this.tiles as unknown as { stats: Record<string, number> }).stats;
     const leaf = Number.isFinite(this.minLeafError) ? this.minLeafError.toFixed(2) : '–';
-    const r = this.osm.stats();
+    const r = { ...this.osm.stats(), ...this.surface.stats() };
     return (
       `tiles active ${this.tiles.activeTiles.size} visible ${this.tiles.visibleTiles.size}` +
       ` dl ${s.downloading} parse ${s.parsing} failed ${s.failed} errors ${this.loadErrors}\n` +
       `min leaf geometricError ${leaf} m\n` +
-      `OSM tiles ${r.roadTiles} loading ${r.roadLoading} errors ${r.roadErrors}  segments ${r.roadSegments}  decode ${r.roadDecodeMs} ms`
+      `OSM tiles ${r.roadTiles} loading ${r.roadLoading} errors ${r.roadErrors}  segments ${r.roadSegments}  decode ${r.roadDecodeMs} ms\n` +
+      `surface tiles ${r.surfaceTiles}  raster ${r.surfaceRasterMs} ms over ${r.surfaceRasterFrames} frames`
     );
   }
 
@@ -297,12 +311,21 @@ export class TilesWorld implements World {
       recoveries: this.recoveries,
       epoch: this.epoch,
       ...this.osm.stats(),
+      ...this.surface.stats(),
     };
   }
 
-  /** No surface map yet: everything is road. */
-  surfaceAt(): SurfaceId {
-    return 'asphalt';
+  /** From OpenStreetMap (osmSurface.ts); asphalt until the tile there has loaded. */
+  surfaceAt(x: number, z: number): SurfaceId {
+    return this.surface.surfaceAt(x, z);
+  }
+
+  /** Re-measures the surface map's world → tile mapping around `focus`, at its height. */
+  private reframeSurface(focus: Vector3): void {
+    this.surface.setFrame(focus.x, focus.z, (x, z) => {
+      const g = this.geo(_unproject.set(x, focus.y, z));
+      return [g.lat, g.lon];
+    });
   }
 
   geo(p: Vector3): Geo {

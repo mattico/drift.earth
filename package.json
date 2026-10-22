@@ -13,6 +13,7 @@
     "trace:report": "node tools/trace-report.mjs",
     "handling": "node tools/handling.mjs",
     "roads": "node tools/roads.mjs",
+    "surfaces": "node tools/surfaces.mjs",
     "check:key": "node tools/check-no-key.mjs"
   },
   "license": "ISC",

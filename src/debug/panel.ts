@@ -1,4 +1,4 @@
-import { HEIGHT_BANDS, RAY_COLORS, ROAD_COLORS, ROAD_VERDICT_COLORS, type FillMode, type OverlayLayers } from './overlay';
+import { HEIGHT_BANDS, RAY_COLORS, ROAD_COLORS, ROAD_VERDICT_COLORS, SURFACE_COLORS, type FillMode, type OverlayLayers } from './overlay';
 
 export interface PanelHandlers {
   onLayers(l: Partial<OverlayLayers>): void;
@@ -102,6 +102,7 @@ export class DebugPanel {
     );
     toggle('gauges', 'Gauges', 'Live gauges over the game view: friction circles, g-g, inputs, aids, drivetrain (stay up with the panel closed)');
     toggle('roads', 'Roads', 'OpenStreetMap road centrelines and the last road teleport’s tries');
+    toggle('surfaces', 'Surfaces', 'What the tires read the ground as: the OpenStreetMap surface map on real tiles, the patches on the practice track');
 
     const time = row('time');
     for (const [s, label] of SCALES) {
@@ -222,6 +223,7 @@ function legend(): string {
     swatch('#40ff60', 'grip'),
   ].join('');
   const roads = (Object.entries(ROAD_COLORS) as Array<[string, number]>).map(([k, v]) => swatch(hex(v), k)).join('');
+  const surfaces = (Object.entries(SURFACE_COLORS) as Array<[string, number]>).map(([k, v]) => swatch(hex(v), k)).join('');
   const tries = (Object.entries(ROAD_VERDICT_COLORS) as Array<[string, number]>).map(([k, v]) => swatch(hex(v), k)).join('');
   return [
     `<div><b>Height above the car's ground</b>${heights}</div>`,
@@ -236,5 +238,6 @@ function legend(): string {
     `<div><b>Trail (first that applied)</b>${trail}</div>`,
     `<div><b>Roads (OSM)</b>${roads}</div>`,
     `<div><b>Road teleport tries</b>${tries}</div>`,
+    `<div><b>Surfaces</b>${surfaces}</div>`,
   ].join('');
 }

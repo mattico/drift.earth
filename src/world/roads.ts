@@ -43,12 +43,12 @@ const CELL_OFFSET = 2 ** 21;
 /**
  * A drivable OpenMapTiles `transportation` feature's class, or null for
  * anything the car shouldn't be put on: paths, rail, ferries, construction,
- * and tunnels (the photogrammetry has no road inside them).
+ * and tunnels (the photogrammetry has no road inside them) unless `tunnels`.
  */
-export function drivableClass(props: Record<string, unknown>): RoadClass | null {
+export function drivableClass(props: Record<string, unknown>, tunnels = false): RoadClass | null {
   const cls = props.class;
   if (typeof cls !== 'string' || !Object.hasOwn(CLASS_PENALTY, cls)) return null;
-  if (props.brunnel === 'tunnel') return null;
+  if (props.brunnel === 'tunnel' && !tunnels) return null;
   if (typeof props.subclass === 'string' && NOT_FOR_CARS.has(props.subclass)) return null;
   return cls as RoadClass;
 }

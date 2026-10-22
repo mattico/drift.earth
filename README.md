@@ -150,9 +150,33 @@ Each wheel knows what it's on, and the tires change with it. Every surface scale
 - With one side on soft ground, that side drags and slews the car toward it: a little on gravel, hard in sand or water. Running two wheels wide onto the verge takes a correction.
 - A slide counts as a drift (for scoring, smoke and the camera) at the same angle on every surface, so drifting on gravel scores as it does on asphalt.
 - Rough surfaces shake the body with position-fixed bumps of a few centimetres, the same each time you pass. The shake is drawn as it is (not eased like the rest of the body's pitch and roll) and moves the ride height, but not the ground plane the physics leans on. Bumps coming faster than 20 a second fade, as the tires and springs soak them up.
-- On the practice track, the east–west street the car starts on (z = 31) carries on east out of the city as a gravel road, to a gravel oval with an asphalt infield. Around it are a cobbled straight, a sand pit, a grass field and a pond. On real tiles everything is asphalt for now.
+- On the practice track, the east–west street the car starts on (z = 31) carries on east out of the city as a gravel road, to a gravel oval with an asphalt infield. Around it are a cobbled straight, a sand pit, a grass field and a pond.
+- In a tunnel the wheels are always on asphalt, whatever the map says of the ground above it (a road tunnel under a river isn't water).
 - The debug panel shows the surface under each wheel (front-left/right, rear-left/right) and each axle's grip; traces record it too.
 - `pnpm handling --surface gravel` runs every scenario on gravel; `pnpm handling --surfaces` compares all of them (see **Handling** below).
+
+**At real locations** the surfaces come from the same OpenStreetMap tiles as the roads (OpenFreeMap, see **Roads** below), never from Google's tiles. Each tile the car is near is turned into a grid of about a metre a cell (`src/world/osmSurface.ts`), drawn in this order, each layer over the ones before:
+
+| OpenStreetMap (OpenMapTiles) | Surface |
+|---|---|
+| Anything not mapped below | Asphalt: unmapped ground counts as hard ground everywhere, since few US suburbs or rural tiles map their land cover |
+| Land cover: grass of every kind (lawns, parks, gardens, golf, meadows, scrub), farmland, wood, wetland | Grass |
+| Land cover: scree | Gravel, over the grass |
+| Land cover: bare rock | Cobbles (solid outcrop, hard and rough), over the grass |
+| Land cover: sand, beach, dune | Sand, over the grass and rock |
+| Land cover: ice | Asphalt (no ice surface) |
+| Land use: running tracks up to 250 m end to end, then pitches up to 2,500 m² | Asphalt: courts and running tracks are hard. Bigger pitches (football and baseball fields) and racecourses are turf, so grass |
+| Road tunnels, as wide as the road | Asphalt, so the park over a short underpass reads as road |
+| Water: rivers, lakes, ponds, the sea, docks, swimming pools | Water, unless it's intermittent or in a culvert. It covers road tunnels too: a river over a tunnel stays water |
+| Bridge outlines (of anything), piers and pedestrian plazas | Asphalt |
+| Footways, cycleways, steps, paths and bridleways, 3 m wide (not indoor corridors) | Asphalt, so a paved path through a lawn isn't lawn; gravel if unpaved, or a path or bridleway not tagged paved |
+| Drivable roads, as wide as their class's carriageway (motorway 14 m, trunk 12, primary 11, secondary 10, tertiary 8, minor 8, service and parking aisles 6, driveways 3.5, tracks 3.5, raceways 10, busways 6); pedestrian streets 8 m (car-free park drives are mapped as these); the decks of every other bridge and pier (footbridges and piers 4 m, rail 6 m). Bridges are drawn 3 m wider | Asphalt, so a deck over water doesn't read as water; gravel if unpaved, or a track not tagged paved (decks without a road are always asphalt) |
+
+- A paved square inside a park reads grass between its paths unless it's mapped as a pedestrian area (Pershing Square in Los Angeles is only footways).
+- Heights are ignored. Anything over or under a mapped park or pond that isn't drawn as a road or bridge reads as the park or pond: a garage under a roof garden, a rooftop car park over a park, or a deck wider than its road's drawn width.
+- OpenMapTiles only says paved or unpaved, so the only cobbles at real locations are bare rock.
+- Ground reads asphalt until its tile has loaded. A dense city tile takes 15–30 ms to draw, so the game spreads it over a few frames (3 ms each). A lookup costs about 50 ns.
+- The map is never shown to players: Google's terms forbid showing another map with their content. Only the debug panel's **Surfaces** layer draws it, to check how OSM lines up with the meshes.
 
 ## How it works
 
@@ -179,10 +203,11 @@ src/
   world/collider.ts      BVH raycasts (three-mesh-bvh) against nearby tile meshes
   world/mapTiles.ts      2D map tile sessions and Web Mercator, for the minimap
   world/osmRoads.ts      OpenStreetMap vector tiles (OpenFreeMap): loading, decoding, projection
+  world/osmSurface.ts    the surface map: OSM land cover, water and roads rasterised per tile
   world/roads.ts         road centrelines in a spatial hash: nearest road, walking along one
   world/roadSnap.ts      picks a clear spot on the nearest road for "back to road"
   debug/trace.ts         always-on ring buffer of physics steps and events
-  debug/overlay.ts       collision wireframe, probe rays, contact history, tire and trail layers, roads
+  debug/overlay.ts       collision wireframe, probe rays, contact history, tire and trail layers, roads, surfaces
   debug/panel.ts, tools.ts  the F3 panel and the window.__drift.debug API
   debug/tuning.ts        the panel's Tuning tab: live car numbers and presets
   debug/tuningPlots.ts   the Tuning tab's tire, gearing and steering plots
@@ -193,6 +218,7 @@ tools/
   capture.mjs        headless (GPU) run → trace, screenshots, console, perf trace
   trace-report.mjs   summarises a trace: wall/edge episodes, stops, repro links
   roads.mjs          road data at every preset spot, and the spot search on a synthetic street
+  surfaces.mjs       the surface map at every preset spot (and PNGs of it), and the rasteriser on synthetic tiles
 ```
 
 - **Rendering.** It uses three.js with `3d-tiles-renderer`. The Maps JavaScript `gmp-map-3d` element was ruled out because it has no per-frame camera control, no ground-height queries and no collision.
@@ -247,6 +273,8 @@ The camera pulls back with speed, up to 140 m. The scroll wheel scales the dista
   - the drivetrain: gear, engine rpm against the driven wheels' rpm (the gap is clutch slip), boost, the limiter, drive force and wheelspin.
 
   **Click the ABS, TC or ESC lamp to switch that aid off** (or on again; `__drift.debug.setAssist('abs', false)` from the console). Off, ABS lets the wheels lock, traction control never cuts drive and stability control never corrects yaw. The preset's numbers stay as they are. The switches last until the page reloads, and traces record them.
+- **Roads** draws the OpenStreetMap road centrelines around the car and the spots the last road teleport tried.
+- **Surfaces** drapes what the tires read the ground as over the meshes around the car: grass green, water blue, sand yellow, gravel orange, cobbles red, asphalt faint grey. At real locations it's the OpenStreetMap surface map, so it shows how well OSM lines up with the photogrammetry. `--debug surfaces` turns it on in captures.
 - **Time** runs physics at 1×, ¼× or ⅒×, or freezes it. **Step** advances one 1/120 s step.
 - The legend in the panel lists every colour.
 
@@ -346,9 +374,25 @@ pnpm roads Shibuya     # matching spots
 
 Road centrelines come from [OpenFreeMap](https://openfreemap.org)'s OpenStreetMap vector tiles (OpenMapTiles schema, zoom 14, no key), never from Google's tiles. The game loads the tile under the car and any neighbour within 300 m, keeps the 9 most recent, and drops footways, cycle paths, rail, ferries, construction and tunnels. `© OpenMapTiles © OpenStreetMap contributors` joins the attribution line once road data has loaded. The practice track has its own street grid. `pnpm roads` checks the spot search on a synthetic street, then loads the real tiles around every preset spot and reports the nearest drivable road (it should be a few metres away; over 25 m fails).
 
+### Surface map
+
+```sh
+pnpm surfaces                                    # every preset spot
+pnpm surfaces Embarcadero --png traces/surfaces  # matching spots, with a PNG of each
+```
+
+`pnpm surfaces` first checks the rasteriser on synthetic tiles (a polygon with a hole, a thick line, the drawing order, clipping at the tile's edges, and a lookup at a known latitude and longitude). Then, for every preset spot, it loads the real tiles through the game's own loader and reports:
+- how long each tile takes to draw, in one go and spread over 3 ms frames (both must give the same grid);
+- the share of each surface within 150 m;
+- the surface at the spot itself (spots are on streets, so it should be asphalt; anything else fails);
+- how far it is to the nearest water and grass, and what a lookup costs.
+
+`--png DIR` writes a 400 m square of the map around each spot, north up, in the debug layer's colours, with a ring at the spot.
+
 ### Google Maps Platform terms
 
 - The Google Maps logo and the data attribution line (sorted by frequency, from the tiles' `copyright` fields) are shown whenever tiles are on screen. The minimap shows the map data copyright for its area, from the Map Tiles viewport API.
 - Tiles are only held in memory. There is no IndexedDB or service-worker caching and no prefetching outside the normal level-of-detail loading.
 - Collision uses the meshes currently loaded for display; nothing derived from them is stored.
 - Road positions come from OpenStreetMap, not from the tiles. The 3D mesh is only raycast at run time to check a spot is clear, the same way collision uses it.
+- The surface map comes from OpenStreetMap too, and it's never shown to players: no minimap, no HUD. Only the debug panel's **Surfaces** layer (F3) draws it, over the meshes, to check how they line up.

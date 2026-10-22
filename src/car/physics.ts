@@ -797,7 +797,7 @@ export class CarPhysics {
       const cosH = Math.cos(this.heading);
       for (let i = 0; i < 4; i++) {
         const [cx, cz] = this.corners[i];
-        this.surface[i] = collider.surfaceAt(this.pos.x + cx * cosH + cz * sinH, this.pos.z - cx * sinH + cz * cosH);
+        this.surface[i] = this.surfaceAt(collider, this.pos.x + cx * cosH + cz * sinH, this.pos.z - cx * sinH + cz * cosH);
       }
       this.surfaceSnap = false;
       k = 1;
@@ -814,6 +814,14 @@ export class CarPhysics {
       g.rollingDiff += (l.rolling - r.rolling - g.rollingDiff) * k;
       g.dragDiff += (l.drag - r.drag - g.dragDiff) * k;
     }
+  }
+
+  /**
+   * The world's surface at (x, z), except in a tunnel: its virtual road is
+   * asphalt whatever the map says of the ground above (a river, a park).
+   */
+  private surfaceAt(collider: Collider, x: number, z: number): SurfaceId {
+    return this.tunnel ? 'asphalt' : collider.surfaceAt(x, z);
   }
 
   // --- Ground --------------------------------------------------------------
@@ -928,7 +936,7 @@ export class CarPhysics {
     } else {
       for (let i = 0; i < 4; i++) if (this.probeState[i] === Probe.Blocked) this.probeState[i] = Probe.Ground;
     }
-    for (let i = 0; i < 4; i++) if (this.probeState[i] === Probe.Ground) this.surface[i] = collider.surfaceAt(this.wheelX[i], this.wheelZ[i]);
+    for (let i = 0; i < 4; i++) if (this.probeState[i] === Probe.Ground) this.surface[i] = this.surfaceAt(collider, this.wheelX[i], this.wheelZ[i]);
 
     // Fill missing/blocked corners from the ones that found ground.
     let fill = 0;

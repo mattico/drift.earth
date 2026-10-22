@@ -11,7 +11,7 @@ export const OSM_ATTRIBUTION = '© OpenMapTiles © OpenStreetMap contributors';
 
 const TILEJSON = 'https://tiles.openfreemap.org/planet';
 /** OpenFreeMap's max zoom: ~2.4 km × cos(lat) across, full street detail. */
-const ZOOM = 14;
+export const ZOOM = 14;
 /** Also load the neighbouring tile when the focus is this close (m) to its edge. */
 const EDGE_MARGIN = 300;
 const MAX_IN_FLIGHT = 2;
@@ -197,6 +197,11 @@ export class OsmRoads {
     };
   }
 
+  /** The wanted tiles (around the focus) that have decoded, the one under it first. */
+  current(): DecodedTile[] {
+    return this.wanted.flatMap((k) => this.tiles.get(k)?.decoded ?? []);
+  }
+
   /** Wanted tiles not yet decoded (still loading or waiting to retry). */
   get pending(): number {
     return this.wanted.filter((k) => !this.tiles.get(k)?.decoded).length;
@@ -286,7 +291,7 @@ export class OsmRoads {
 
   private rebuild(): void {
     this.dirty = false;
-    let tiles = this.wanted.flatMap((k) => this.tiles.get(k)?.decoded ?? []);
+    let tiles = this.current();
     // While the tiles around a new focus load, the ones held from before are better than nothing.
     if (!tiles.length) tiles = this.decoded();
     const ways: RoadWay[] = [];

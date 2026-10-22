@@ -47,6 +47,7 @@ const DEFAULT_LAYERS: OverlayLayers = {
   trail: false,
   gauges: false,
   roads: false,
+  surfaces: false,
 };
 
 /**
@@ -150,7 +151,7 @@ export class DebugTools {
   /**
    * Applies a `?debug=` URL value: a comma list of layers to turn on
    * (wire, height, slope, nophoto, probes, history, overpass, tires, trail, gauges,
-   * roads), or empty for the saved defaults.
+   * roads, surfaces), or empty for the saved defaults.
    */
   applyParam(value: string): void {
     const on = new Set(value.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
@@ -166,6 +167,7 @@ export class DebugTools {
         trail: on.has('trail'),
         gauges: on.has('gauges'),
         roads: on.has('roads'),
+        surfaces: on.has('surfaces'),
       };
     }
     this.open = true;

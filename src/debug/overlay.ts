@@ -1,6 +1,7 @@
 import {
   BufferAttribute,
   BufferGeometry,
+  DataTexture,
   DoubleSide,
   DynamicDrawUsage,
   Group,
@@ -8,12 +9,14 @@ import {
   LineSegments,
   Mesh,
   MeshBasicMaterial,
+  RGBAFormat,
   ShaderMaterial,
   Vector3,
   type Matrix4,
 } from 'three';
 import { PHYSICS as P } from '../config';
 import { Probe, type CarPhysics, type OverpassDecision, type WallRayDebug } from '../car/physics';
+import type { SurfaceId } from '../car/surfaces';
 import type { RoadClass } from '../world/roads';
 import type { RoadSearch, RoadVerdict } from '../world/roadSnap';
 import type { World } from '../world/types';
@@ -41,6 +44,8 @@ export interface OverlayLayers {
   gauges: boolean;
   /** OSM road centrelines around the car and the last road teleport's tries. */
   roads: boolean;
+  /** What the world says each patch of ground is made of (World.surfaceAt), draped over the meshes. */
+  surfaces: boolean;
 }
 
 /** Colliders further than this from the car are left out of the overlay. */
@@ -98,6 +103,13 @@ const slipColor = (share: number) => (share < 0.7 ? 0x40ff60 : share <= 1 ? 0xff
 const driftColor = (a: number) => (a < P.driftEnterSlip ? 0xffffff : a < 35 * DEG ? 0xb080ff : a < 60 * DEG ? 0xff80c0 : 0xff3030);
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const _v = new Vector3();
+/** The surfaces layer samples World.surfaceAt into a texture this wide (m) around the car… */
+const SURFACE_SPAN = 300;
+/** …this many texels across: about a metre, like the OSM surface map's cells. */
+const SURFACE_TEXELS = 320;
+/** Re-sampled this often (s), so tiles rasterised meanwhile show up, or once the car is this far (m) off its centre. */
+const SURFACE_REFRESH = 1;
+const SURFACE_RECENTRE = 30;
 
 // Height bands relative to the car's ground, mirroring the physics thresholds.
 // Shared by the shader and the legend.
@@ -163,6 +175,22 @@ void main() {
   gl_FragColor = vec4(c, a);
 }`;
 
+const SURFACE_FRAG = /* glsl */ `
+uniform sampler2D uMap;
+uniform vec2 uOrigin;
+uniform float uSpan;
+uniform vec2 uCar;
+uniform float uRadius;
+varying vec3 vWorld;
+void main() {
+  vec2 uv = (vWorld.xz - uOrigin) / uSpan;
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) discard;
+  vec4 c = texture2D(uMap, uv);
+  c.a *= 1.0 - smoothstep(uRadius * 0.85, uRadius, distance(vWorld.xz, uCar));
+  if (c.a < 0.01) discard;
+  gl_FragColor = c;
+}`;
+
 function overlayMaterial(mode: 0 | 1 | 2, opts: { wireframe: boolean; bias: number; opacity: number }): ShaderMaterial {
   return new ShaderMaterial({
     vertexShader: VERT,
@@ -187,6 +215,7 @@ function overlayMaterial(mode: 0 | 1 | 2, opts: { wireframe: boolean; bias: numb
 interface Shadow {
   wire: Mesh;
   fill: Mesh;
+  surface: Mesh;
 }
 
 interface Decision extends OverpassDecision {
@@ -199,6 +228,17 @@ const PROBE_COLORS: Record<Probe, number> = {
   [Probe.Miss]: 0x909090,
   [Probe.Drop]: 0x3070ff,
 };
+
+/** Surfaces layer and tools/surfaces.mjs. Asphalt draws faint, so everything else stands out. */
+export const SURFACE_COLORS: Record<SurfaceId, number> = {
+  asphalt: 0x707078,
+  cobbles: 0xc06040,
+  gravel: 0xe0a040,
+  grass: 0x40d040,
+  sand: 0xfff080,
+  water: 0x3080ff,
+};
+const SURFACE_ALPHA: Record<SurfaceId, number> = { asphalt: 60, cobbles: 160, gravel: 160, grass: 150, sand: 170, water: 170 };
 
 /** Main roads bright, minor ones dimmer, bridges violet. */
 export const ROAD_COLORS: Record<RoadClass | 'bridge', number> = {
@@ -248,6 +288,27 @@ export class DebugOverlay {
   private readonly wireMat = overlayMaterial(0, { wireframe: true, bias: 0.0004, opacity: 0.85 });
   private readonly fillHeight = overlayMaterial(1, { wireframe: false, bias: 0, opacity: 0.45 });
   private readonly fillSlope = overlayMaterial(2, { wireframe: false, bias: 0, opacity: 0.45 });
+  /** Surfaces around the car: texel (c, r) is the ground at uOrigin + (c + ½, r + ½) texels in x, z. Nearest-filtered, as DataTextures are. */
+  private readonly surfaceTex = new DataTexture(new Uint8Array(SURFACE_TEXELS * SURFACE_TEXELS * 4), SURFACE_TEXELS, SURFACE_TEXELS, RGBAFormat);
+  private readonly surfaceMat = new ShaderMaterial({
+    vertexShader: VERT,
+    fragmentShader: SURFACE_FRAG,
+    uniforms: {
+      uBias: { value: 0 },
+      uMap: { value: this.surfaceTex },
+      uOrigin: { value: [0, 0] },
+      uSpan: { value: SURFACE_SPAN },
+      uCar: { value: [0, 0] },
+      uRadius: { value: RADIUS },
+    },
+    transparent: true,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -4,
+  });
+  /** Where the surface texture was last sampled, and how long ago (s). */
+  private readonly sampled = { x: 0, z: 0, age: Infinity };
   private readonly lines: LineSegments;
   private readonly positions: Float32Array;
   private readonly colors: Float32Array;
@@ -316,10 +377,11 @@ export class DebugOverlay {
     this.trailSteps = 0;
     this.trailPending = TRAIL_GRIP;
     this.road = null;
+    this.sampled.age = Infinity;
   }
 
   private clearShadows(): void {
-    for (const s of this.shadows.values()) this.root.remove(s.wire, s.fill);
+    for (const s of this.shadows.values()) this.root.remove(s.wire, s.fill, s.surface);
     this.shadows.clear();
   }
 
@@ -389,6 +451,7 @@ export class DebugOverlay {
   }
 
   applyMatrix(m: Matrix4): void {
+    this.sampled.age = Infinity;
     for (const c of this.contacts) c.p.applyMatrix4(m);
     if (this.road) {
       this.road.from.applyMatrix4(m);
@@ -418,6 +481,7 @@ export class DebugOverlay {
     for (const d of this.decisions) d.age += dt;
     while (this.decisions.length && this.decisions[0].age > DECISION_TTL) this.decisions.shift();
 
+    if (layers.surfaces) this.sampleSurfaces(dt, world, p);
     this.updateShadows(world, p, layers);
     this.segs = 0;
     this.tris = 0;
@@ -453,7 +517,8 @@ export class DebugOverlay {
       m.uniforms.uRef.value = p.groundY;
       m.uniforms.uCar.value = [p.pos.x, p.pos.z];
     }
-    const want = layers.wire || layers.fill !== 'off';
+    this.surfaceMat.uniforms.uCar.value = [p.pos.x, p.pos.z];
+    const want = layers.wire || layers.fill !== 'off' || layers.surfaces;
     this.scratch.length = 0;
     if (want) world.collectColliders(p.pos.x, p.pos.z, RADIUS, this.scratch);
     this.seen.clear();
@@ -461,18 +526,19 @@ export class DebugOverlay {
       this.seen.add(src);
       let s = this.shadows.get(src);
       if (!s) {
-        s = { wire: this.shadow(src, this.wireMat), fill: this.shadow(src, fillMat) };
+        s = { wire: this.shadow(src, this.wireMat), fill: this.shadow(src, fillMat), surface: this.shadow(src, this.surfaceMat) };
         this.shadows.set(src, s);
-        this.root.add(s.wire, s.fill);
+        this.root.add(s.wire, s.fill, s.surface);
       }
       s.wire.visible = layers.wire;
       s.fill.visible = layers.fill !== 'off';
       s.fill.material = fillMat;
+      s.surface.visible = layers.surfaces;
     }
     // Tiles that unloaded (or moved out of range) take their geometry with them.
     for (const [src, s] of this.shadows) {
       if (this.seen.has(src)) continue;
-      this.root.remove(s.wire, s.fill);
+      this.root.remove(s.wire, s.fill, s.surface);
       this.shadows.delete(src);
     }
   }
@@ -482,11 +548,43 @@ export class DebugOverlay {
     m.matrixAutoUpdate = false;
     m.matrixWorldAutoUpdate = false;
     m.frustumCulled = false;
-    m.renderOrder = material.wireframe ? 902 : 901;
+    m.renderOrder = material.wireframe ? 902 : material === this.surfaceMat ? 903 : 901;
     // Follow the source mesh, including rebases, at draw time.
     m.onBeforeRender = () => m.matrixWorld.copy(src.matrixWorld);
     m.raycast = () => {};
     return m;
+  }
+
+  /**
+   * Samples the world's surfaces into the texture the `surfaces` layer drapes
+   * over the meshes, at points fixed to the world (whole texels), so the
+   * pattern doesn't crawl as the car moves. On real tiles this is the OSM
+   * surface map, which may only ever show here, never in the game's own view.
+   */
+  private sampleSurfaces(dt: number, world: World, p: CarPhysics): void {
+    const s = this.sampled;
+    s.age += dt;
+    if (s.age < SURFACE_REFRESH && Math.hypot(p.pos.x - s.x, p.pos.z - s.z) < SURFACE_RECENTRE) return;
+    s.age = 0;
+    s.x = p.pos.x;
+    s.z = p.pos.z;
+    const texel = SURFACE_SPAN / SURFACE_TEXELS;
+    const x0 = Math.round((p.pos.x - SURFACE_SPAN / 2) / texel) * texel;
+    const z0 = Math.round((p.pos.z - SURFACE_SPAN / 2) / texel) * texel;
+    const data = this.surfaceTex.image.data as Uint8Array;
+    for (let r = 0; r < SURFACE_TEXELS; r++) {
+      for (let c = 0; c < SURFACE_TEXELS; c++) {
+        const id = world.surfaceAt(x0 + (c + 0.5) * texel, z0 + (r + 0.5) * texel);
+        const col = SURFACE_COLORS[id];
+        const k = (r * SURFACE_TEXELS + c) * 4;
+        data[k] = (col >> 16) & 255;
+        data[k + 1] = (col >> 8) & 255;
+        data[k + 2] = col & 255;
+        data[k + 3] = SURFACE_ALPHA[id];
+      }
+    }
+    this.surfaceTex.needsUpdate = true;
+    this.surfaceMat.uniforms.uOrigin.value = [x0, z0];
   }
 
   // --- Lines ---------------------------------------------------------------
@@ -928,6 +1026,8 @@ export class DebugOverlay {
     this.wireMat.dispose();
     this.fillHeight.dispose();
     this.fillSlope.dispose();
+    this.surfaceMat.dispose();
+    this.surfaceTex.dispose();
     this.lines.geometry.dispose();
     (this.lines.material as LineBasicMaterial).dispose();
     this.fills.geometry.dispose();
