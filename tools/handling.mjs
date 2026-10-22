@@ -3,10 +3,13 @@
 // inputs and reports how it handles: grip, braking, launch, drifts held in each
 // gear, and recovery. No browser or map tiles; takes a few seconds.
 //
-//   node tools/handling.mjs [filter] [--car hatch|muscle] [--all] [--timeline] [--json]
+//   node tools/handling.mjs [filter] [--car hatch|muscle] [--surface ID | --surfaces] [--all] [--timeline] [--json]
 //
 //   filter       only scenarios whose name contains this text
 //   --car        which car (default: the game's default)
+//   --surface    the ground: asphalt (default), cobbles, gravel, grass, sand, water
+//   --surfaces   compare every surface on the key numbers instead (grip, braking,
+//                launch, speed, coasting, drifts), each also as × asphalt
 //   --all        also the front-drive scenarios on a rear-drive car
 //   --timeline   also print slip°/yaw°/km/h every 0.25 s
 //   --json       machine-readable results
@@ -23,14 +26,19 @@ const vite = await createServer({ root: ROOT, logLevel: 'error', server: { middl
 const { CarPhysics } = await vite.ssrLoadModule('/src/car/physics.ts');
 const { PHYSICS } = await vite.ssrLoadModule('/src/config.ts');
 const { CARS, DEFAULT_CAR } = await vite.ssrLoadModule('/src/car/cars.ts');
+const { SURFACES, SURFACE_IDS } = await vite.ssrLoadModule('/src/car/surfaces.ts');
 const dt = PHYSICS.dt;
 const DEG = 180 / Math.PI;
 
-// An endless flat floor at y = 0.
+// An endless flat floor at y = 0, all of it `surface`.
 const floorObject = { userData: { solid: true } };
+let surface = 'asphalt';
 const collider = {
   candidateCount: 1,
   prepare() {},
+  surfaceAt() {
+    return surface;
+  },
   cast(o, d, far, out) {
     if (d.y > -0.5 || o.y < 0 || o.y > far) return null;
     const h = out ?? { point: new Vector3(), normal: new Vector3(), distance: 0, object: floorObject };
@@ -114,7 +122,10 @@ const SCENARIOS = {
   'scandinavian flick 80, lift': [80, [[0.5, I(0.3, -0.7)], [0.5, I(0, 1)], [2.5, I(0.3, 0.3)]], { fwd: true }],
 };
 
-function simulate(kmh, phases, opts = {}) {
+// `metrics` gets when and how far in the car first stopped (null if it didn't),
+// the lateral g its tires held over the last 1.5 s and how long it drifted to
+// the left (the way the scenarios' handbrake turns go).
+function simulate(kmh, phases, opts = {}, metrics = {}) {
   const p = new CarPhysics({}, CARS[carId]);
   p.reset(new Vector3(0, 0, 0), 0);
   p.launch(kmh / 3.6);
@@ -125,11 +136,27 @@ function simulate(kmh, phases, opts = {}) {
   let t = 0;
   let prevDir = Math.atan2(p.vel.x, -p.vel.z);
   const r = { timeline: [], drift: 0, maxSlip: 0, maxBodySlip: 0, path: 0, marks: {}, spin: 0 };
+  const total = phases.reduce((s, [d]) => s + d, 0);
+  let dist = 0;
+  let lat = 0;
+  let latN = 0;
+  metrics.stopped = metrics.stopDist = null;
+  metrics.driftLeft = 0;
   for (const [dur, inp] of phases) {
     const t0 = t;
     for (let i = 0; i < Math.round(dur / dt); i++) {
-      p.step(typeof inp === 'function' ? inp(t - t0) : inp, dt, collider);
+      p.step(typeof inp === 'function' ? inp(t - t0, p) : inp, dt, collider);
       t += dt;
+      dist += p.speed * dt;
+      if (metrics.stopped === null && kmh > 0 && p.speed < 0.3) {
+        metrics.stopped = t;
+        metrics.stopDist = dist;
+      }
+      if (p.drifting && p.slip < 0) metrics.driftLeft += dt;
+      if (t > total - 1.5) {
+        lat += Math.abs(p.tire.forceF[1] + p.tire.forceR[1]) / (p.car.chassis.mass * 9.81);
+        latN++;
+      }
       const dir = Math.atan2(p.vel.x, -p.vel.z);
       if (p.speed > 1) r.path += Math.atan2(Math.sin(dir - prevDir), Math.cos(dir - prevDir));
       prevDir = dir;
@@ -142,6 +169,7 @@ function simulate(kmh, phases, opts = {}) {
       if (Math.round(t / dt) % 30 === 0) r.timeline.push({ t, slip: p.slip * DEG, yaw: p.yawRate * DEG, kmh: p.speed * 3.6, gear: p.drivetrain.gear, drifting: p.drifting });
     }
   }
+  metrics.latG = lat / Math.max(1, latN);
   // "Held": the last 1.5 s.
   const tail = r.timeline.filter((w) => w.t > t - 1.5);
   const mean = (k) => tail.reduce((s, w) => s + w[k], 0) / Math.max(1, tail.length);
@@ -162,28 +190,119 @@ const args = process.argv.slice(2);
 const carAt = args.indexOf('--car');
 const carId = carAt >= 0 ? args.splice(carAt, 2)[1] : DEFAULT_CAR;
 if (!CARS[carId]) throw new Error(`unknown car ${carId}; one of ${Object.keys(CARS).join(', ')}`);
+const surfaceArg = args.indexOf('--surface');
+if (surfaceArg >= 0) surface = args.splice(surfaceArg, 2)[1];
+if (!SURFACES[surface]) throw new Error(`unknown surface ${surface}; one of ${SURFACE_IDS.join(', ')}`);
 const filter = args.find((a) => !a.startsWith('--'));
-const results = {};
-for (const [name, [kmh, phases, opts]] of Object.entries(SCENARIOS)) {
-  if (filter && !name.includes(filter)) continue;
-  if (((opts?.fwd && CARS[carId].drive !== 'fwd') || (opts?.rwd && CARS[carId].drive !== 'rwd')) && !args.includes('--all')) continue;
-  results[name] = simulate(kmh, phases, opts);
-}
-await vite.close();
 
-if (args.includes('--json')) {
-  console.log(JSON.stringify(results, null, 1));
-} else {
-  const f = (n, w = 4) => n.toFixed(0).padStart(w);
-  console.log(`${'scenario'.padEnd(34)} ${'held slip'.padStart(9)} ${'yaw°/s'.padStart(6)} ${'km/h'.padStart(5)}  ${'max slip'.padStart(8)} ${'path°'.padStart(6)} drift  spin m/s`);
-  for (const [name, r] of Object.entries(results)) {
-    // Marks not reached in the scenario's time show as '—'.
-    const z = (m) => (r.zeroTo[m] === undefined ? '—' : `${r.zeroTo[m].toFixed(2)} s`);
-    const extra = name.startsWith('launch') ? `  0–60 ${z(60)}, 0–100 ${z(100)} (0–60 mph ${z(96.56)})` : '';
+function runScenarios() {
+  const results = {};
+  for (const [name, [kmh, phases, opts]] of Object.entries(SCENARIOS)) {
+    if (filter && !name.includes(filter)) continue;
+    if (((opts?.fwd && CARS[carId].drive !== 'fwd') || (opts?.rwd && CARS[carId].drive !== 'rwd')) && !args.includes('--all')) continue;
+    results[name] = simulate(kmh, phases, opts);
+  }
+  return results;
+}
+
+// Slides started on purpose: their drift time and the slip they hold.
+const DRIFTS = /handbrake|drift|flick|lift-off|power-over|blip|floored steer/;
+
+/**
+ * A driver holding a left-hand drift at 25°: a little steering into the slide,
+ * more while it is shallower, less (or countersteer) while deeper, damped by
+ * how fast it changes; a tap of the handbrake when it is dying away; and on a
+ * rear-drive car, the throttle to set the angle. The same hands on every
+ * surface, so how long they keep it sliding says how easy the surface makes it.
+ */
+function holdDrift(rwd) {
+  const target = 25 / DEG;
+  let prev = null;
+  return (t, p) => {
+    const slip = -p.slip;
+    const rate = prev === null ? 0 : (slip - prev) / dt;
+    prev = slip;
+    const e = target - slip;
+    const throttle = rwd ? Math.max(0, Math.min(1, 0.5 + 3 * e)) : 0.5;
+    return I(throttle, Math.max(-1, Math.min(1, 0.3 + 2 * e - 0.3 * rate)), e > 12 / DEG && rate < 0);
+  };
+}
+
+/** The key numbers on the current surface. */
+function surfaceSummary() {
+  const results = runScenarios();
+  const skid = {};
+  simulate(60, [[3, I(0.3, 1)]], {}, skid);
+  const brake = {};
+  simulate(100, [[10, I(0, 0, false, 1)]], {}, brake);
+  const launch = simulate(0, [[20, I(1, 0)]]);
+  const coast = {};
+  simulate(80, [[20, I(0, 0)]], {}, coast);
+  // Into a handbrake turn at 70, then 6 s of holding it.
+  const hold = {};
+  const holding = simulate(70, [[0.4, I(0, 1, true)], [6, holdDrift(CARS[carId].drive === 'rwd')]], {}, hold);
+  const drifts = Object.entries(results).filter(([name]) => DRIFTS.test(name));
+  return {
+    // Full lock from 60: the tires' sideways force over the last 1.5 s.
+    latG: skid.latG,
+    brakeM: brake.stopDist,
+    brakeS: brake.stopped,
+    zeroTo100: launch.zeroTo[100] ?? null,
+    kmh20s: launch.end,
+    coastS: coast.stopped,
+    driftS: drifts.reduce((s, [, r]) => s + r.drift, 0),
+    heldSlip: drifts.reduce((s, [, r]) => s + Math.abs(r.held.slip), 0) / Math.max(1, drifts.length),
+    maxSlip: drifts.reduce((s, [, r]) => s + r.maxSlip, 0) / Math.max(1, drifts.length),
+    spun: Object.values(results).filter((r) => r.spun).length,
+    scenarios: Object.keys(results).length,
+    hold: hold.driftLeft,
+    holdSpun: holding.spun,
+  };
+}
+
+if (args.includes('--surfaces')) {
+  const table = {};
+  for (const id of SURFACE_IDS) {
+    surface = id;
+    table[id] = surfaceSummary();
+  }
+  await vite.close();
+  if (args.includes('--json')) console.log(JSON.stringify(table, null, 1));
+  else {
+    const base = table.asphalt;
+    // A value and its ratio to asphalt's.
+    const x = (v, b, digits, unit, w) => {
+      if (v === null) return '—'.padEnd(w);
+      const ratio = b ? ` ×${(v / b).toFixed(2)}` : '';
+      return `${v.toFixed(digits)}${unit}${ratio}`.padEnd(w);
+    };
     console.log(
-      `${name.padEnd(34)} ${f(r.held.slip, 8)}° ${f(r.held.yaw, 6)} ${f(r.held.kmh, 5)}  ${f(r.maxSlip, 7)}° ${f(r.path, 6)} ${r.drift.toFixed(1).padStart(4)} s ${r.spin.toFixed(1).padStart(5)}${r.spun ? '  SPUN' : ''}${extra}`,
+      `${CARS[carId].name}: ${'surface'.padEnd(8)} ${'lat g'.padEnd(11)} ${'brake 100–0'.padEnd(20)} ${'0–100'.padEnd(13)} ${'km/h @20 s'.padEnd(13)} ${'coast 80–0'.padEnd(14)} ${'drift'.padEnd(13)} held/max slip  spun   drift held`,
     );
-    if (args.includes('--timeline'))
-      console.log('    ' + r.timeline.map((w) => `${w.drifting ? '*' : ''}${w.slip.toFixed(0)}/${w.yaw.toFixed(0)}/${w.kmh.toFixed(0)}`).join(' '));
+    for (const [id, m] of Object.entries(table)) {
+      console.log(
+        `${''.padEnd(CARS[carId].name.length + 2)}${id.padEnd(8)} ${x(m.latG, base.latG, 2, '', 11)} ${x(m.brakeM, base.brakeM, 0, ' m', 11)} ${x(m.brakeS, null, 1, ' s', 8)} ${x(m.zeroTo100, base.zeroTo100, 1, ' s', 13)} ${x(m.kmh20s, base.kmh20s, 0, '', 13)} ${x(m.coastS, base.coastS, 1, ' s', 14)} ${x(m.driftS, base.driftS, 0, ' s', 13)} ${`${m.heldSlip.toFixed(0)}°/${m.maxSlip.toFixed(0)}°`.padEnd(14)} ${`${m.spun}/${m.scenarios}`.padEnd(6)} ${m.hold.toFixed(1)} s${m.holdSpun ? ' SPUN' : ''}`,
+      );
+    }
+  }
+} else {
+  const results = runScenarios();
+  await vite.close();
+
+  if (args.includes('--json')) {
+    console.log(JSON.stringify(results, null, 1));
+  } else {
+    const f = (n, w = 4) => n.toFixed(0).padStart(w);
+    console.log(`${'scenario'.padEnd(34)} ${'held slip'.padStart(9)} ${'yaw°/s'.padStart(6)} ${'km/h'.padStart(5)}  ${'max slip'.padStart(8)} ${'path°'.padStart(6)} drift  spin m/s`);
+    for (const [name, r] of Object.entries(results)) {
+      // Marks not reached in the scenario's time show as '—'.
+      const z = (m) => (r.zeroTo[m] === undefined ? '—' : `${r.zeroTo[m].toFixed(2)} s`);
+      const extra = name.startsWith('launch') ? `  0–60 ${z(60)}, 0–100 ${z(100)} (0–60 mph ${z(96.56)})` : '';
+      console.log(
+        `${name.padEnd(34)} ${f(r.held.slip, 8)}° ${f(r.held.yaw, 6)} ${f(r.held.kmh, 5)}  ${f(r.maxSlip, 7)}° ${f(r.path, 6)} ${r.drift.toFixed(1).padStart(4)} s ${r.spin.toFixed(1).padStart(5)}${r.spun ? '  SPUN' : ''}${extra}`,
+      );
+      if (args.includes('--timeline'))
+        console.log('    ' + r.timeline.map((w) => `${w.drifting ? '*' : ''}${w.slip.toFixed(0)}/${w.yaw.toFixed(0)}/${w.kmh.toFixed(0)}`).join(' '));
+    }
   }
 }

@@ -321,7 +321,7 @@ export class Game {
     this.applyCar();
     // Paused, nothing else poses the new model or the gearbox display until resume.
     this.steerShown = 0;
-    this.car.update({ x: P.pos.x, y: P.pos.y, z: P.pos.z, heading: P.heading, pitch: P.pitch, roll: P.roll, steer: 0, vForward: 0, braking: false, reversing: false }, 1);
+    this.car.update({ x: P.pos.x, y: P.pos.y, z: P.pos.z, heading: P.heading, pitch: P.pitch, roll: P.roll, ridePitch: P.ridePitch, rideRoll: P.rideRoll, steer: 0, vForward: 0, braking: false, reversing: false }, 1);
     const box = P.drivetrain;
     this.hud.setDrive({ rpm: box.rpm, gear: box.gear, mode: box.mode, limiting: false });
     this.debug.event('car', { id });
@@ -717,6 +717,8 @@ export class Game {
         heading,
         pitch: P.pitch,
         roll: P.roll,
+        ridePitch: P.ridePitch,
+        rideRoll: P.rideRoll,
         steer: this.steerShown,
         vForward: P.vForward,
         braking: (inp.brake > 0 && P.vForward > 0.5) || inp.handbrake,
@@ -926,6 +928,8 @@ export class Game {
         P.tunnel ? `  tunnel ${P.tunnel.d.toFixed(0)} m grade ${(P.tunnel.grade * 100).toFixed(1)}%${P.tunnel.exit ? ' exit seen' : ''}` : ''
       }`,
       `tires  front ${(P.tire.slipF * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tire.loadF / 1000).toFixed(1)} kN  rear ${(P.tire.slipR * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tire.loadR / 1000).toFixed(1)} kN  wheel ${(P.wheelSpeed * MPH).toFixed(0)} mph  steer ${(P.steer * MathUtils.RAD2DEG).toFixed(0)}°`,
+      // Front-left/right, rear-left/right; then each axle's blended grip.
+      `surface ${P.surface[0]}/${P.surface[1]} ${P.surface[2]}/${P.surface[3]}  grip ×${P.axleSurface[0].grip.toFixed(2)}/×${P.axleSurface[1].grip.toFixed(2)}`,
       (() => {
         const box = P.drivetrain;
         const out = box.output();

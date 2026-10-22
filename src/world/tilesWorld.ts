@@ -25,6 +25,7 @@ import {
   SphereRegion,
 } from '3d-tiles-renderer/three/plugins';
 import { TILES } from '../config';
+import type { SurfaceId } from '../car/surfaces';
 import { overlapsColumn, worldBox } from './meshBounds';
 import { OSM_ATTRIBUTION, OsmRoads } from './osmRoads';
 import type { RoadNetwork } from './roads';
@@ -297,6 +298,11 @@ export class TilesWorld implements World {
       epoch: this.epoch,
       ...this.osm.stats(),
     };
+  }
+
+  /** No surface map yet: everything is road. */
+  surfaceAt(): SurfaceId {
+    return 'asphalt';
   }
 
   geo(p: Vector3): Geo {

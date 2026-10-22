@@ -2,6 +2,7 @@ import { MathUtils, Vector3, type Matrix4 } from 'three';
 import { PHYSICS as P } from '../config';
 import { CARS, DEFAULT_CAR, type CarSpec, type ChassisSpec } from './cars';
 import { Drivetrain, type DriveOutput } from './drivetrain';
+import { SURFACES, type SurfaceId } from './surfaces';
 import type { Collider, RayHit } from '../world/collider';
 
 export interface CarInput {
@@ -163,6 +164,20 @@ export interface Assists {
 }
 export type Assist = keyof Assists;
 
+/** One axle's ground: its two wheels' surfaces (surfaces.ts), averaged and eased in. */
+export interface AxleSurface {
+  grip: number;
+  peakSlip: number;
+  slideLift: number;
+  rolling: number;
+  drag: number;
+  /** Left wheel's rolling and drag less the right's: soft ground under one side pulls the car toward it. */
+  rollingDiff: number;
+  dragDiff: number;
+}
+
+const asphaltAxle = (): AxleSurface => ({ grip: 1, peakSlip: 1, slideLift: 0, rolling: 0, drag: 0, rollingDiff: 0, dragDiff: 0 });
+
 /** What the wall solver pushed against during the last step (pen 0 if nothing). */
 export interface WallContact {
   pen: number;
@@ -267,6 +282,9 @@ export class CarPhysics {
   /** Body pitch (nose up +) and roll (left side up +) from the ground plane. */
   pitch = 0;
   roll = 0;
+  /** What rough ground adds to pitch and roll this step: quick, so the car model shows it uneased. */
+  ridePitch = 0;
+  rideRoll = 0;
   readonly groundNormal = new Vector3(0, 1, 0);
   groundY = 0;
   private groundVel = 0;
@@ -276,6 +294,15 @@ export class CarPhysics {
   private missTime = 0;
   private readonly cornerH = [0, 0, 0, 0];
   readonly probeState: Probe[] = [Probe.Miss, Probe.Miss, Probe.Miss, Probe.Miss];
+  /** The surface under each wheel (by Probe corner), as of the last probe that found ground there. */
+  readonly surface: SurfaceId[] = ['asphalt', 'asphalt', 'asphalt', 'asphalt'];
+  /** Front and rear axles' surface, blended from their wheels' over `surfaceTau`. */
+  readonly axleSurface: [AxleSurface, AxleSurface] = [asphaltAxle(), asphaltAxle()];
+  /** Set by reset() and setCar(): take the surface under the wheels at once, unblended. */
+  private surfaceSnap = true;
+  /** World x, z of each wheel's probe this step. */
+  private readonly wheelX = [0, 0, 0, 0];
+  private readonly wheelZ = [0, 0, 0, 0];
 
   // Diagnostics, overwritten every step.
   /** Edge (ledge/drop) that reverted the last step's motion. */
@@ -319,6 +346,7 @@ export class CarPhysics {
     const mode = this.drivetrain.mode;
     this.drivetrain = new Drivetrain(car.drivetrain);
     this.drivetrain.mode = mode;
+    this.surfaceSnap = true;
   }
 
   /** Brings the car to rest where it stands, keeping what it knows of the ground (a tunnel's virtual road, caches, airborne). */
@@ -372,7 +400,7 @@ export class CarPhysics {
     this.blobs.length = 0;
     this.tunnel = null;
     this.roadTrail.length = 0;
-    this.pitch = this.roll = 0;
+    this.pitch = this.roll = this.ridePitch = this.rideRoll = 0;
     this.groundNormal.set(0, 1, 0);
     this.groundY = pos.y;
     this.groundVel = 0;
@@ -380,6 +408,7 @@ export class CarPhysics {
     this.airborne = false;
     this.waiting = false;
     this.missTime = 0;
+    this.surfaceSnap = true;
   }
 
   /** Applies a world rebase: positions by `m`, directions by `yaw`. */
@@ -425,6 +454,7 @@ export class CarPhysics {
       this.solveGround(collider, dt);
       if (this.waiting) return;
     }
+    this.blendSurfaces(collider, dt);
 
     const sinH = Math.sin(this.heading);
     const cosH = Math.cos(this.heading);
@@ -569,9 +599,10 @@ export class CarPhysics {
     const vyF = vL + a * r;
     const wx = vF * cd + vyF * sd;
     const wy = -vF * sd + vyF * cd;
-    const gripF = this.c.muFront * loadF;
+    const [gF, gR] = this.axleSurface;
+    const gripF = this.c.muFront * gF.grip * loadF;
     const vyR = vL - b * r;
-    const gripR = this.c.muRear * loadR;
+    const gripR = this.c.muRear * gR.grip * loadR;
     const J = engine.inertia;
     const footF = brake * this.c.brakeDecel * this.c.brakeFront * m;
     const abs = this.assists.abs;
@@ -595,7 +626,7 @@ export class CarPhysics {
       // the grip and spinning up the wheels and engine alongside the car take
       // (or a low gear would launch well short of the grip, and the front's is
       // all the car has), and cuts the drive as they spin past it.
-      const sxF = (this.wheelSpeed - wx) / Math.max(Math.abs(wx), P.tireMinSpeed) / this.c.peakSlipRatio;
+      const sxF = (this.wheelSpeed - wx) / Math.max(Math.abs(wx), P.tireMinSpeed) / (this.c.peakSlipRatio * gF.peakSlip);
       const tcLimit = gripF * (1 + J / m) * (1 - MathUtils.smoothstep(sxF, 0.8, 1.3));
       if (this.traction > 0 && drive > tcLimit) drive -= (drive - tcLimit) * this.traction;
       if (drive < 0) drive = Math.max(drive, -0.85 * gripF * Math.sqrt(Math.max(0, 1 - (this.tire.forceF[1] / gripF) ** 2)));
@@ -604,7 +635,7 @@ export class CarPhysics {
       footGiven += this.footApplied;
       this.wheelSpeed = ws;
       this.wheelSpin = Math.max(0, Math.abs(ws) - Math.abs(wx));
-      const front = axleTire(this.c, true, ws, wx, wy, loadF, _front);
+      const front = axleTire(this.c, true, gF, ws, wx, wy, loadF, _front);
       fxw = front.x;
       fyw = front.y;
       t.slideF = front.sliding ? Math.hypot(ws - wx, wy) : 0;
@@ -613,7 +644,7 @@ export class CarPhysics {
       this.rollSpeed = this.spinAxle(false, this.rollSpeed, 0, D.wheelInertia / D.wheelRadius ** 2, vF, vyR, loadR, footR, hand, 0, h);
       footGiven += this.footApplied;
       rearWheel = this.rollSpeed;
-      rear = axleTire(this.c, false, rearWheel, vF, vyR, loadR, _rear);
+      rear = axleTire(this.c, false, gR, rearWheel, vF, vyR, loadR, _rear);
       // Only the handbrake means the rear is meant to be out (front wheelspin
       // doesn't unsettle it), and then for as long as the slide it started
       // goes on. A slide that grows out of lifting off stays in stability
@@ -622,8 +653,8 @@ export class CarPhysics {
       else this.intent -= h;
     } else {
       // Rear-drive. The fronts only steer and brake.
-      const sy = wy / (Math.max(Math.abs(wx), P.tireMinSpeed) * Math.tan(this.c.peakSlipAngle));
-      fyw = -Math.sign(sy) * gripF * tireCurve(Math.abs(sy), this.c.slideFront);
+      const sy = wy / (Math.max(Math.abs(wx), P.tireMinSpeed) * Math.tan(this.c.peakSlipAngle) * gF.peakSlip);
+      fyw = -Math.sign(sy) * gripF * tireCurve(Math.abs(sy), slideOn(this.c.slideFront, gF));
       // ABS: braking only takes the grip cornering leaves (so a braked, steered
       // car still turns), and never reverses the wheel.
       const room = Math.sqrt(Math.max(0, gripF * gripF - fyw * fyw));
@@ -631,7 +662,7 @@ export class CarPhysics {
       if (!abs && footF > room && patch > 1) {
         // Without ABS, braking past what the cornering leaves locks the
         // wheels: they slide straight on along the patch's travel, and don't steer.
-        const f = (gripF * this.c.slideFront) / patch;
+        const f = (gripF * slideOn(this.c.slideFront, gF)) / patch;
         fxw = -wx * f;
         fyw = -wy * f;
         footGiven += footF;
@@ -652,10 +683,10 @@ export class CarPhysics {
       this.wheelSpeed = rearWheel = ws;
       this.wheelSpin = Math.max(0, Math.abs(ws) - Math.abs(vF));
       // A deliberate slide (handbrake, wheelspin) switches stability control off for a moment.
-      const spinning = ws - vF > Math.max(1.5, 2 * this.c.peakSlipRatio * Math.max(Math.abs(vF), P.tireMinSpeed));
+      const spinning = ws - vF > Math.max(1.5, 2 * this.c.peakSlipRatio * gR.peakSlip * Math.max(Math.abs(vF), P.tireMinSpeed));
       if (this.handbrakeF > 0.2 || spinning || this.drifting) this.intent = this.c.stabilityOff;
       else this.intent -= h;
-      rear = axleTire(this.c, false, ws, vF, vyR, loadR, _rear);
+      rear = axleTire(this.c, false, gR, ws, vF, vyR, loadR, _rear);
     }
     const frontLong = fxw * cd - fyw * sd;
     const frontLat = fxw * sd + fyw * cd;
@@ -672,8 +703,10 @@ export class CarPhysics {
     // drift under way (braking or lifting mid-corner) gets a yaw torque back.
     let spin = 0;
     const slipR = Math.abs(t.slipR);
-    const allow = this.c.stabilitySlip ?? this.c.peakSlipAngle;
-    if (this.assists.esc && this.intent <= 0 && slipR > allow && vF > 3) spin -= Math.sign(r) * Math.min(Math.abs(r) / h, this.c.stability * (slipR - allow));
+    // On loose ground the rear's peak comes later, and the brakes it works
+    // with have less grip to push against.
+    const allow = (this.c.stabilitySlip ?? this.c.peakSlipAngle) * gR.peakSlip;
+    if (this.assists.esc && this.intent <= 0 && slipR > allow && vF > 3) spin -= Math.sign(r) * Math.min(Math.abs(r) / h, this.c.stability * gR.grip * (slipR - allow));
     const forceF = frontLong + rear.x;
     const forceL = frontLat + rear.y;
     this.vel.x += ((forceF * fx + forceL * lx) / m) * h;
@@ -682,10 +715,23 @@ export class CarPhysics {
     this.heading += this.yawRate * h;
     this.accelF += (forceF / m - this.accelF) * (1 - Math.exp(-h / 0.08));
 
-    // Drag and rolling resistance oppose motion and never reverse it.
+    // Drag and rolling resistance oppose motion and never reverse it. The
+    // surface's share is each axle's, weighted by the load it carries.
     const sp = Math.hypot(this.vel.x, this.vel.z);
     if (sp > 1e-4) {
-      const s2 = moveToward(sp, 0, (this.c.rollingDecel + this.c.dragK * sp * sp) * h) / sp;
+      const L = this.c.wheelbase;
+      const roll = (gF.rolling * b + gR.rolling * a) / L;
+      const soft = (gF.drag * b + gR.drag * a) / L;
+      const decel = (this.c.rollingDecel + roll + soft * sp + this.c.dragK * sp * sp) * h;
+      // Soft ground under one side holds that side back and slews the car
+      // toward it (each wheel carrying half its axle's share of the weight),
+      // as far as the drag it adds actually slows the car.
+      const pull = ((gF.rollingDiff + gF.dragDiff * sp) * b + (gR.rollingDiff + gR.dragDiff * sp) * a) / L;
+      if (pull !== 0) {
+        const ahead = (this.vel.x * fx + this.vel.z * fz) / sp;
+        this.yawRate += ((pull * (m / 2) * this.c.cornerX * ahead) / this.c.yawInertia) * Math.min(1, sp / decel) * h;
+      }
+      const s2 = moveToward(sp, 0, decel) / sp;
       this.vel.x *= s2;
       this.vel.z *= s2;
     }
@@ -729,13 +775,45 @@ export class CarPhysics {
     engineBrake: number,
     h: number,
   ): number {
-    const fx0 = axleTire(this.c, front, ws, vx, vy, load, _probe).x;
-    const k = Math.max(0, (axleTire(this.c, front, ws + 0.05, vx, vy, load, _probe).x - fx0) / 0.05);
+    const g = this.axleSurface[front ? 0 : 1];
+    const fx0 = axleTire(this.c, front, g, ws, vx, vy, load, _probe).x;
+    const k = Math.max(0, (axleTire(this.c, front, g, ws + 0.05, vx, vy, load, _probe).x - fx0) / 0.05);
     ws += (h * (drive - fx0)) / (J + h * k);
-    if (this.assists.abs && Math.abs(ws) < Math.abs(vx) - this.c.peakSlipRatio * Math.max(Math.abs(vx), P.tireMinSpeed)) foot = 0;
+    if (this.assists.abs && Math.abs(ws) < Math.abs(vx) - this.c.peakSlipRatio * g.peakSlip * Math.max(Math.abs(vx), P.tireMinSpeed)) foot = 0;
     this.footApplied = foot;
     const resist = foot + hand + engineBrake;
     return moveToward(ws, 0, (h * resist) / (J + h * k));
+  }
+
+  /**
+   * Eases each axle's surface toward the mean of its two wheels' (time constant
+   * `surfaceTau`), so a wheel crossing onto gravel doesn't jolt the car. After
+   * a reset or a car swap it takes the surface under the wheels as it is.
+   */
+  private blendSurfaces(collider: Collider, dt: number): void {
+    let k = 1 - Math.exp(-dt / P.surfaceTau);
+    if (this.surfaceSnap) {
+      const sinH = Math.sin(this.heading);
+      const cosH = Math.cos(this.heading);
+      for (let i = 0; i < 4; i++) {
+        const [cx, cz] = this.corners[i];
+        this.surface[i] = collider.surfaceAt(this.pos.x + cx * cosH + cz * sinH, this.pos.z - cx * sinH + cz * cosH);
+      }
+      this.surfaceSnap = false;
+      k = 1;
+    }
+    for (let a = 0; a < 2; a++) {
+      const g = this.axleSurface[a];
+      const l = SURFACES[this.surface[2 * a]];
+      const r = SURFACES[this.surface[2 * a + 1]];
+      g.grip += ((l.grip + r.grip) / 2 - g.grip) * k;
+      g.peakSlip += ((l.peakSlip + r.peakSlip) / 2 - g.peakSlip) * k;
+      g.slideLift += ((l.slideLift + r.slideLift) / 2 - g.slideLift) * k;
+      g.rolling += ((l.rolling + r.rolling) / 2 - g.rolling) * k;
+      g.drag += ((l.drag + r.drag) / 2 - g.drag) * k;
+      g.rollingDiff += (l.rolling - r.rolling - g.rollingDiff) * k;
+      g.dragDiff += (l.drag - r.drag - g.dragDiff) * k;
+    }
   }
 
   // --- Ground --------------------------------------------------------------
@@ -752,6 +830,8 @@ export class CarPhysics {
       // Car space → world: x' = cx·cos + cz·sin, z' = −cx·sin + cz·cos (rotation about +Y by ψ).
       const wx = this.pos.x + cx * cosH + cz * sinH;
       const wz = this.pos.z - cx * sinH + cz * cosH;
+      this.wheelX[i] = wx;
+      this.wheelZ[i] = wz;
       const h = this.cornerH[i];
       // Probe from the wheel's last ground height so canopy/overpasses above are
       // ignored. In the air, probe from the body instead, so decks between the
@@ -848,6 +928,7 @@ export class CarPhysics {
     } else {
       for (let i = 0; i < 4; i++) if (this.probeState[i] === Probe.Blocked) this.probeState[i] = Probe.Ground;
     }
+    for (let i = 0; i < 4; i++) if (this.probeState[i] === Probe.Ground) this.surface[i] = collider.surfaceAt(this.wheelX[i], this.wheelZ[i]);
 
     // Fill missing/blocked corners from the ones that found ground.
     let fill = 0;
@@ -879,7 +960,28 @@ export class CarPhysics {
     const target = new Vector3(-gx, 1, -gz).normalize();
     this.groundNormal.lerp(target, 1 - Math.exp(-dt / 0.1)).normalize();
 
-    const newGround = (hts[0] + hts[1] + hts[2] + hts[3]) / 4;
+    // Rough ground rocks and lifts the body. It stays out of the plane fit (a
+    // bump is no slope to roll down) and out of cornerH (which the next probes
+    // start from and steps are judged against): its tilt goes to ridePitch and
+    // rideRoll, which the car model adds as they are (its 80 ms easing of the
+    // plane's pitch and roll would swallow a cobble), its height to the springs.
+    // Bumps that come faster than the body can follow (P.bumpHz) are soaked up
+    // by the tires and springs; it also keeps short ones from aliasing into
+    // random shake once a step covers most of a bump.
+    let lift = 0;
+    this.ridePitch = this.rideRoll = 0;
+    if (!this.airborne) {
+      const bump = this.bumpScratch;
+      for (let i = 0; i < 4; i++) {
+        const s = SURFACES[this.surface[i]];
+        const follow = Math.min(1, (P.bumpHz * s.bumpLength) / Math.max(this.speed, 1e-3));
+        bump[i] = s.bump > 0 ? s.bump * follow * bumpNoise(this.wheelX[i] / s.bumpLength, this.wheelZ[i] / s.bumpLength) : 0;
+      }
+      this.ridePitch = (bump[0] + bump[1] - bump[2] - bump[3]) / (4 * this.c.cornerZ);
+      this.rideRoll = (bump[0] + bump[2] - bump[1] - bump[3]) / (4 * this.c.cornerX);
+      lift = (bump[0] + bump[1] + bump[2] + bump[3]) / 4;
+    }
+    const newGround = (hts[0] + hts[1] + hts[2] + hts[3]) / 4 + lift;
     const gv = (newGround - this.groundY) / dt;
     this.groundVel += (MathUtils.clamp(gv, -30, 30) - this.groundVel) * (1 - Math.exp(-dt / 0.05));
     this.groundY = newGround;
@@ -896,6 +998,7 @@ export class CarPhysics {
   /** Recently passed blobs: probes ignore their surfaces. */
   private readonly blobs: Blob[] = [];
   private readonly cornerScratch = [0, 0, 0, 0];
+  private readonly bumpScratch = [0, 0, 0, 0];
 
   /** Zeroes everything that turns: wheels, yaw, tire state, engine (to idle in 1st). */
   private stopRotating(): void {
@@ -1726,6 +1829,36 @@ function predictCorner(h: number[], i: number): number {
 }
 
 /**
+ * Smooth value noise in −1…1 on a unit lattice, hashed from the position, so
+ * the same bumps come back every time a wheel rolls over them.
+ */
+function bumpNoise(x: number, z: number): number {
+  const ix = Math.floor(x);
+  const iz = Math.floor(z);
+  const u = x - ix;
+  const v = z - iz;
+  const su = u * u * (3 - 2 * u);
+  const sv = v * v * (3 - 2 * v);
+  const a = lattice(ix, iz);
+  const b = lattice(ix + 1, iz);
+  const c = lattice(ix, iz + 1);
+  const d = lattice(ix + 1, iz + 1);
+  return a + (b - a) * su + (c - a) * sv + (a - b - c + d) * su * sv;
+}
+
+/** A lattice point's value, −1…1. */
+function lattice(ix: number, iz: number): number {
+  let h = (Math.imul(ix, 374761393) + Math.imul(iz, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 2147483647.5 - 1;
+}
+
+/** A slide factor (slideFront/slideRear) on ground that loses less grip past the peak. */
+function slideOn(slide: number, g: AxleSurface): number {
+  return slide + (1 - slide) * g.slideLift;
+}
+
+/**
  * Tire force as a share of peak for normalised slip `s` (1 = peak): a smooth
  * rise to the peak, then a fall to `slide` by s = 3.
  */
@@ -1756,20 +1889,21 @@ const _probe: AxleForce = { x: 0, y: 0, sliding: false };
  * combined, and the force points against the combined slip (scaled to an
  * ellipse of muRear forward, muRearSide sideways at the rear; muFront both ways
  * at the front), so wheelspin or a locked wheel leaves little sideways grip.
+ * The surface `g` scales the grip and the peaks, and softens the fall past them.
  */
-function axleTire(c: ChassisSpec, front: boolean, ws: number, vx: number, vy: number, load: number, out: AxleForce): AxleForce {
+function axleTire(c: ChassisSpec, front: boolean, g: AxleSurface, ws: number, vx: number, vy: number, load: number, out: AxleForce): AxleForce {
   const ref = Math.max(Math.abs(vx), P.tireMinSpeed);
-  const sx = (ws - vx) / ref / c.peakSlipRatio;
-  const sy = vy / ref / Math.tan(c.peakSlipAngle);
+  const sx = (ws - vx) / ref / (c.peakSlipRatio * g.peakSlip);
+  const sy = vy / ref / (Math.tan(c.peakSlipAngle) * g.peakSlip);
   const s = Math.hypot(sx, sy);
   if (s < 1e-6) {
     out.x = out.y = 0;
     out.sliding = false;
     return out;
   }
-  const f = (load * tireCurve(s, front ? c.slideFront : c.slideRear)) / s;
-  out.x = (front ? c.muFront : c.muRear) * f * sx;
-  out.y = -(front ? c.muFront : c.muRearSide) * f * sy;
+  const f = (load * tireCurve(s, slideOn(front ? c.slideFront : c.slideRear, g))) / s;
+  out.x = (front ? c.muFront : c.muRear) * g.grip * f * sx;
+  out.y = -(front ? c.muFront : c.muRearSide) * g.grip * f * sy;
   out.sliding = s > 1;
   return out;
 }

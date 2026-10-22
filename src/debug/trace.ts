@@ -1,4 +1,5 @@
 import { PHYSICS } from '../config';
+import { SURFACE_IDS } from '../car/surfaces';
 import type { CarInput, CarPhysics } from '../car/physics';
 
 /**
@@ -83,6 +84,8 @@ export const FRAME_COLUMNS = [
   'driveForce',
   /** Foot brake the car took (0…1): a key's or touch button's eased in. */
   'brakeF',
+  /** Surface under each wheel (index into SURFACE_IDS), 3 bits each: FL | FR<<3 | RL<<6 | RR<<9. */
+  'surfaces',
 ] as const;
 
 export type FrameColumn = (typeof FRAME_COLUMNS)[number];
@@ -211,6 +214,8 @@ export class TraceRecorder {
     b[o + COL.torque] = d.output().torque;
     b[o + COL.driveForce] = d.force;
     b[o + COL.brakeF] = p.brakeF;
+    const g = p.surface;
+    b[o + COL.surfaces] = SURFACE_IDS.indexOf(g[0]) | (SURFACE_IDS.indexOf(g[1]) << 3) | (SURFACE_IDS.indexOf(g[2]) << 6) | (SURFACE_IDS.indexOf(g[3]) << 9);
     this.head = (this.head + 1) % this.capacity;
     if (this.count < this.capacity) this.count++;
   }

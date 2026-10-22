@@ -1,5 +1,6 @@
 import { BufferGeometry, Mesh, Raycaster, Vector3, type Intersection } from 'three';
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
+import type { SurfaceId } from '../car/surfaces';
 import type { World } from './types';
 
 BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
@@ -67,6 +68,11 @@ export class Collider {
 
   get candidateCount(): number {
     return this.candidates.length;
+  }
+
+  /** The world's surface at (x, z): what the tires are on there. */
+  surfaceAt(x: number, z: number): SurfaceId {
+    return this.world.surfaceAt(x, z);
   }
 
   /** Nearest hit along the ray, or null. */

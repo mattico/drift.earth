@@ -13,6 +13,8 @@ export const PHYSICS = {
   tireMinSpeed: 3,
   pedalTau: 0.1, // throttle and handbrake smoothing, so tapping a key feathers
   brakeRamp: 0.4, // a brake key or touch button takes this long (s) to reach full, so a tap brakes lightly (and, ABS off, doesn't lock the wheels)
+  surfaceTau: 0.1, // a wheel crossing onto another surface eases its axle over to it
+  bumpHz: 20, // rough ground's bumps reach the body up to this rate, fading above it
 
   // Drift detection, read off the slide for scoring, smoke and the camera.
   driftEnterSpeed: 8,

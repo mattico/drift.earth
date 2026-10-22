@@ -1,4 +1,5 @@
 import type { Matrix4, Mesh, Object3D, PerspectiveCamera, Vector3 } from 'three';
+import type { SurfaceId } from '../car/surfaces';
 import type { RoadNetwork } from './roads';
 
 export interface RebaseResult {
@@ -43,6 +44,8 @@ export interface World {
   debugInfo(): string;
   /** Numeric counters for traces (tile counts, load errors…). */
   stats(): Record<string, number>;
+  /** What the ground at (x, z) is made of, for the tires (car/surfaces.ts). */
+  surfaceAt(x: number, z: number): SurfaceId;
   /** Real-world position of a world-space point, if the world has one. */
   geo(p: Vector3): Geo | null;
   /**

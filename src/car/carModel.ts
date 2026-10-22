@@ -31,6 +31,9 @@ export interface CarPose {
   heading: number;
   pitch: number;
   roll: number;
+  /** Rough ground's quick share of pitch and roll, shown uneased. */
+  ridePitch: number;
+  rideRoll: number;
   steer: number;
   vForward: number;
   braking: boolean;
@@ -144,6 +147,9 @@ export class CarModel {
   private readonly reverseMat = new MeshStandardMaterial({ color: 0x777777, emissive: 0xffffff, emissiveIntensity: 0 });
   private readonly wheelR: number;
   private wheelAngle = 0;
+  /** The ground plane's pitch and roll, eased. */
+  private pitch = 0;
+  private roll = 0;
   /** Front and rear wheel contact points in car space (for skid marks / smoke). */
   readonly frontWheels: ReadonlyArray<[number, number]>;
   readonly rearWheels: ReadonlyArray<[number, number]>;
@@ -273,8 +279,10 @@ export class CarModel {
     this.root.position.set(pose.x, pose.y, pose.z);
     this.root.rotation.set(0, pose.heading, 0);
     const k = 1 - Math.exp(-dt / 0.08);
-    this.body.rotation.x = MathUtils.lerp(this.body.rotation.x, pose.pitch, k);
-    this.body.rotation.z = MathUtils.lerp(this.body.rotation.z, -pose.roll, k);
+    this.pitch = MathUtils.lerp(this.pitch, pose.pitch, k);
+    this.roll = MathUtils.lerp(this.roll, pose.roll, k);
+    this.body.rotation.x = this.pitch + pose.ridePitch;
+    this.body.rotation.z = -(this.roll + pose.rideRoll);
     for (const p of this.frontPivots) p.rotation.y = pose.steer;
     this.wheelAngle -= (pose.vForward / this.wheelR) * dt;
     for (const s of this.spinners) s.rotation.x = this.wheelAngle;

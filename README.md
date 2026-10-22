@@ -133,6 +133,27 @@ Browsers only start audio after a key press or click; a gamepad button doesn't c
 
 **Scoring:** drifting earns points for speed × slip angle. The multiplier rises every 2 s you hold a drift. A drift chain banks 1.2 s after it ends. Hitting a wall hard during the chain loses it.
 
+### Surfaces
+
+Each wheel knows what it's on, and the tires change with it. Every surface scales the car's own grip and drag, so each car keeps its character; asphalt leaves it exactly as tuned. The numbers are in `src/car/surfaces.ts`.
+
+| | Grip | What it does |
+|---|---|---|
+| Asphalt | 1× | The reference. |
+| Cobbles | 0.85× | A little less grip, and a constant shake through the body. |
+| Gravel | 0.63× | Grip peaks later and falls off less past the peak, so slides are slower to start, long and forgiving. Braking takes about 1.45× as far and getting to 62 mph (100 km/h) about 1.6× as long. Bumpy. |
+| Grass | 0.39× | Braking takes twice as far, and the soft ground holds the speed down (about half asphalt's after 20 s flat out). Flat past the peak, like gravel. Bumpier. |
+| Sand | 0.6× | Soft: off the throttle the car stops in about 4 s from 50 mph, and on it the car crawls (9–13 mph). |
+| Water | 0.25× | Next to no grip and heavy wading drag: enough to crawl out at walking pace. |
+
+- When a wheel crosses onto another surface, its axle eases over to it in about 0.1 s, so the boundary doesn't jolt. Traction control, ABS and stability control work to the grip under them.
+- With one side on soft ground, that side drags and slews the car toward it: a little on gravel, hard in sand or water. Running two wheels wide onto the verge takes a correction.
+- A slide counts as a drift (for scoring, smoke and the camera) at the same angle on every surface, so drifting on gravel scores as it does on asphalt.
+- Rough surfaces shake the body with position-fixed bumps of a few centimetres, the same each time you pass. The shake is drawn as it is (not eased like the rest of the body's pitch and roll) and moves the ride height, but not the ground plane the physics leans on. Bumps coming faster than 20 a second fade, as the tires and springs soak them up.
+- On the practice track, the east–west street the car starts on (z = 31) carries on east out of the city as a gravel road, to a gravel oval with an asphalt infield. Around it are a cobbled straight, a sand pit, a grass field and a pond. On real tiles everything is asphalt for now.
+- The debug panel shows the surface under each wheel (front-left/right, rear-left/right) and each axle's grip; traces record it too.
+- `pnpm handling --surface gravel` runs every scenario on gravel; `pnpm handling --surfaces` compares all of them (see **Handling** below).
+
 ## How it works
 
 ```
@@ -148,6 +169,7 @@ src/
   car/cars.ts        the cars: chassis, tires, steering, brakes, stability, drivetrain
   car/presets.ts     tuning presets: format, validation, storage
   car/physics.ts     tire-force chassis (slip, load transfer, wheelspin; front or rear drive), ground following, wall response
+  car/surfaces.ts    what asphalt, cobbles, gravel, grass, sand and water do to the tires
   car/drivetrain.ts  torque curve, turbo, gearbox (auto/manual), clutch, rev limiter, engine braking
   car/carModel.ts    procedural low-poly cars (the muscle car's body), see-through ghost, blob shadow
   car/hatchBody.ts   the hot hatch's body and wheels
@@ -307,9 +329,13 @@ This runs headless Chrome with GPU flags (ANGLE/D3D11), starting a dev server if
 pnpm handling                  # every scenario, for the default car (the hot hatch)
 pnpm handling --car muscle     # the muscle car
 pnpm handling drift --timeline # matching scenarios, with slip°/yaw°/km/h every 0.25 s
+pnpm handling --surface gravel # every scenario on gravel (or cobbles, grass, sand, water)
+pnpm handling --surfaces       # every surface against asphalt
 ```
 
-This runs the car physics on a flat plane through scripted inputs (grip, braking, launch, power-over and handbrake drifts, held drifts in each gear, reversing) and prints the slip angle held, yaw rate, speed, path turned, time spent drifting and the driven wheels' mean wheelspin. Scenarios for one layout (lift-off and handbrake tricks for front drive, burnouts and 2nd-gear breakaway for rear drive) only run for such a car, or for any with `--all`. No browser or tiles are needed, so run it after changing any tuning in `src/car/cars.ts`.
+This runs the car physics on a flat plane through scripted inputs (grip, braking, launch, power-over and handbrake drifts, held drifts in each gear, reversing) and prints the slip angle held, yaw rate, speed, path turned, time spent drifting and the driven wheels' mean wheelspin. Scenarios for one layout (lift-off and handbrake tricks for front drive, burnouts and 2nd-gear breakaway for rear drive) only run for such a car, or for any with `--all`. No browser or tiles are needed, so run it after changing any tuning in `src/car/cars.ts` or `src/car/surfaces.ts`.
+
+`--surfaces` prints one line per surface, each number also as a multiple of asphalt's: the tires' sideways grip at full lock from 60 km/h (in g), braking from 100 km/h to a stop, 0–100 km/h, the speed after 20 s flat out, coasting to a stop from 80 km/h, drift time, slip held and peak slip across the drift scenarios, how many of them spun, and how long a scripted driver keeps a handbrake drift going (steering against the angle, tapping the handbrake, and on the muscle car working the throttle).
 
 ### Roads
 
