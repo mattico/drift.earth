@@ -269,6 +269,10 @@ export class DebugTools {
         `${this.ctx.statsText()}\ntrace ${r.steps} steps (${(r.steps * PHYSICS.dt).toFixed(0)} s)  events ${r.eventList().length}  epoch ${r.epoch}`,
       );
     }
+    if (this.open && this.tab === 'tuning') {
+      const out = p.drivetrain.output();
+      this.tuning.live(time, out.rpm, out.torque);
+    }
   }
 
   /** Frame timings, for the 2 Hz `sample` events. */

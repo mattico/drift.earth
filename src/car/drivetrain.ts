@@ -200,11 +200,11 @@ export class Drivetrain {
     return { drive, engineBrake, inertia };
   }
 
-  /** Current torque (N·m) and power (hp), for the debug readout. */
-  output(): { torque: number; hp: number } {
+  /** Current torque on tap (N·m) and power (hp) at the (unsmoothed) engine rpm, for the debug readouts. */
+  output(): { rpm: number; torque: number; hp: number } {
     const D = this.spec;
     const torque = this.boosted(torqueAt(D, this.engineRpm));
-    return { torque, hp: ((torque * this.engineRpm) / 9549) * HP_PER_KW };
+    return { rpm: this.engineRpm, torque, hp: ((torque * this.engineRpm) / 9549) * HP_PER_KW };
   }
 
   /**

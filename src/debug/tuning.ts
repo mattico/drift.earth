@@ -7,7 +7,7 @@
 // labels, units, groups, slider ranges and display scaling.
 
 import { CARS, DEFAULT_CAR, type CarId, type CarSpec } from '../car/cars';
-import { powerHp, torqueAt } from '../car/drivetrain';
+import { powerHp } from '../car/drivetrain';
 import {
   bundle,
   checkNumber,
@@ -207,6 +207,8 @@ export class TuningEditor {
   /** Groups the player has open (remembered per browser). */
   private openGroups = new Set<string>(['Chassis', 'Tyres']);
   private nameMode: 'saveAs' | 'rename' = 'saveAs';
+  /** Moves the torque plot's live rpm marker (set by the curve row). */
+  private liveCurve: ((time: number, rpm: number, torque: number) => void) | null = null;
 
   private readonly select = el('select', 'tun-select');
   private readonly carName = el('span', 'tun-car');
@@ -247,6 +249,11 @@ export class TuningEditor {
     this.render();
     this.h.event('preset', { ...this.describe(), why: 'car' });
     return this.spec;
+  }
+
+  /** Each frame the tab is showing: the engine's rpm and the torque on tap there (N·m), for the torque plot. */
+  live(time: number, rpm: number, torque: number): void {
+    this.liveCurve?.(time, rpm, torque);
   }
 
   get dirty(): boolean {
@@ -666,6 +673,7 @@ export class TuningEditor {
   private render(): void {
     this.refreshPresets();
     this.rows = [];
+    this.liveCurve = null;
     const groups = new Map<string, { body: HTMLElement; items: Array<{ order: number; el: HTMLElement }> }>();
     const groupFor = (name: string) => {
       let g = groups.get(name);
@@ -880,13 +888,28 @@ export class TuningEditor {
     return row;
   }
 
-  /** The torque curve: an [rpm, N·m] table with add / remove, and a small plot with power. */
+  /**
+   * The torque curve: a plot with power, the engine's live rpm and points to
+   * drag, and an [rpm, N·m] table with add / remove.
+   */
   private curveRow(path: string[], m: ReturnType<typeof metaFor>): HTMLElement {
     const row = this.fieldShell(path, m, `${(getAt(this.stock, path) as unknown[]).length} points`);
     row.classList.add('tun-wide');
     const lim = fieldLimit(path, getAt(this.stock, path));
     const cur = () => getAt(this.spec, path) as Array<[number, number]>;
     const plot = el('div', 'tun-plot');
+    const graph = el('div', 'tun-graph');
+    // The curves are redrawn on every edit; the live layer and the handles stay put.
+    const curves = el('div', 'tun-layer');
+    const liveLayer = el('div', 'tun-layer');
+    liveLayer.innerHTML = '<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><line class="tun-rpm" y1="0" y2="100"/><polyline class="tun-trail"/></svg>';
+    const rpmLine = liveLayer.querySelector('line')!;
+    const trail = liveLayer.querySelector('polyline')!;
+    const dot = el('div', 'tun-live');
+    dot.hidden = true;
+    const key = el('div', 'tun-plot-key');
+    const liveKey = el('span', 'tun-live-key');
+    liveKey.title = 'Engine rpm now, and the torque on tap there at the current boost';
     const table = el('table', 'tun-curve');
     table.innerHTML = '<thead><tr><th>rpm</th><th>N·m</th><th>hp</th><th></th></tr></thead>';
     const tbody = el('tbody');
@@ -935,12 +958,97 @@ export class TuningEditor {
     });
     more.disabled = cur().length >= lim.len![1];
     addRow.append(more);
+
+    // A drag keeps the scale it started on, so the point stays under the pointer.
+    let view = curveView(this.spec.drivetrain);
+    let drag: { i: number; view: CurveView; moved: boolean } | null = null;
+    const handles = cur().map((_, i) => {
+      const h = el('div', 'tun-handle');
+      h.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        h.setPointerCapture(e.pointerId);
+        h.classList.add('drag');
+        drag = { i, view, moved: false };
+      });
+      h.addEventListener('pointermove', (e) => drag?.i === i && dragTo(e));
+      const end = () => {
+        if (drag?.i !== i) return;
+        h.classList.remove('drag');
+        if (drag.moved) this.h.event('tune', { path: path.join('.'), value: cur() });
+        drag = null;
+        update();
+      };
+      h.addEventListener('pointerup', end);
+      h.addEventListener('pointercancel', end);
+      return h;
+    });
+    const dragTo = (e: PointerEvent) => {
+      const { i, view: v } = drag!;
+      const r = graph.getBoundingClientRect();
+      const c = cur();
+      // Snapped, inside the plot and between its neighbours (the rpm must rise).
+      const lo = Math.max(v.lo, (c[i - 1]?.[0] ?? -Infinity) + DRAG_RPM);
+      const hi = Math.min(v.hi, (c[i + 1]?.[0] ?? Infinity) - DRAG_RPM);
+      const rpmAt = v.lo + ((e.clientX - r.left) / r.width) * (v.hi - v.lo);
+      const rpm = lo <= hi ? Math.min(hi, Math.max(lo, Math.round(rpmAt / DRAG_RPM) * DRAG_RPM)) : c[i][0];
+      const nmAt = plotValue(((e.clientY - r.top) / r.height) * 100, v.nm);
+      const nm = Math.min(Math.floor(v.nm), Math.max(0, Math.round(nmAt)));
+      if (rpm === c[i][0] && nm === c[i][1]) return;
+      const next = c.map((p) => [...p] as [number, number]);
+      next[i] = [rpm, nm];
+      const err = this.edit(path, next, false);
+      for (const pair of boxes) for (const b of pair) b.classList.toggle('bad', !!err);
+      if (err) return;
+      drag!.moved = true;
+      this.clearMsg();
+      syncBoxes(true);
+      update();
+    };
+
     const update = () => {
       const D = this.spec.drivetrain;
-      cur().forEach(([rpm], i) => hpCells[i] && (hpCells[i].textContent = show(powerHp(D, rpm), 0)));
-      plot.innerHTML = curveSvg(D);
+      view = drag?.view ?? curveView(D);
+      cur().forEach(([rpm, nm], i) => {
+        if (hpCells[i]) hpCells[i].textContent = show(powerHp(D, rpm), 0);
+        const h = handles[i];
+        if (!h) return;
+        h.style.left = `${plotX(view, rpm)}%`;
+        h.style.top = `${plotY(nm, view.nm)}%`;
+        h.title = `${show(rpm, 0)} rpm, ${show(nm, 1)} N·m (drag to move)`;
+      });
+      const drawn = curveSvg(D, view);
+      curves.innerHTML = drawn.svg;
+      key.innerHTML = drawn.key;
+      key.append(liveKey);
     };
+    const syncBoxes = (force?: boolean) =>
+      cur().forEach(([rpm, nm], i) => {
+        const pair = boxes[i];
+        if (!pair) return;
+        if (force || pair[0] !== document.activeElement) pair[0].value = show(rpm, 0);
+        if (force || pair[1] !== document.activeElement) pair[1].value = show(nm, 1);
+      });
+
+    // The engine as it runs: a line at its rpm, a dot at the torque on tap, and where it's been.
+    const recent: Array<[number, number, number]> = [];
+    this.liveCurve = (time, rpm, nm) => {
+      if (recent.length && (time < recent[0][0] || time - recent[0][0] > 60)) recent.length = 0;
+      recent.push([time, rpm, nm]);
+      while (time - recent[0][0] > TRAIL_S) recent.shift();
+      const x = plotX(view, rpm).toFixed(2);
+      rpmLine.setAttribute('x1', x);
+      rpmLine.setAttribute('x2', x);
+      trail.setAttribute('points', recent.map(([, r, n]) => `${plotX(view, r).toFixed(2)},${plotY(n, view.nm).toFixed(2)}`).join(' '));
+      dot.hidden = false;
+      dot.style.left = `${x}%`;
+      dot.style.top = `${plotY(nm, view.nm)}%`;
+      liveKey.textContent = `now ${Math.round(rpm)} rpm, ${Math.round(nm)} N·m`;
+    };
+
     update();
+    graph.append(curves, liveLayer, ...handles, dot);
+    plot.append(graph, key);
     const ctl = el('div', 'tun-ctl tun-curve-wrap');
     ctl.append(plot, table, addRow);
     row.append(ctl);
@@ -948,12 +1056,7 @@ export class TuningEditor {
       path,
       el: row,
       sync: (force) => {
-        cur().forEach(([rpm, nm], i) => {
-          const pair = boxes[i];
-          if (!pair) return;
-          if (force || pair[0] !== document.activeElement) pair[0].value = show(rpm, 0);
-          if (force || pair[1] !== document.activeElement) pair[1].value = show(nm, 1);
-        });
+        syncBoxes(force);
         update();
       },
     });
@@ -993,28 +1096,54 @@ function donorName(path: readonly string[]): string {
   return id ? `the ${CARS[id].name.toLowerCase()}` : 'the default';
 }
 
-/** Torque (red) and power (amber) from idle to the limiter, each scaled to its own peak; the redline dashed. */
-function curveSvg(D: CarSpec['drivetrain']): string {
-  const W = 300;
-  const H = 64;
-  const lo = Math.min(D.idleRpm, D.torque[0][0]);
-  const hi = Math.max(D.limiter, D.torque[D.torque.length - 1][0]);
-  const xs = Array.from({ length: 61 }, (_, i) => lo + ((hi - lo) * i) / 60);
-  const tq = xs.map((r) => torqueAt(D, r));
-  const hp = xs.map((r) => powerHp(D, r));
-  const line = (ys: number[]) => {
-    const max = Math.max(...ys, 1e-6);
-    return ys.map((y, i) => `${((i / 60) * W).toFixed(1)},${(H - 3 - (y / max) * (H - 8)).toFixed(1)}`).join(' ');
+/** The torque plot's scale: rpm across, N·m up (with headroom to drag the peak higher). */
+interface CurveView {
+  lo: number;
+  hi: number;
+  nm: number;
+}
+
+/** Plot headroom over each line's peak. */
+const HEADROOM = 1.25;
+/** Dragged curve points snap to this, and keep this far from their neighbours. */
+const DRAG_RPM = 50;
+/** Seconds of live rpm the plot trails. */
+const TRAIL_S = 1.5;
+
+function curveView(D: CarSpec['drivetrain']): CurveView {
+  return {
+    lo: Math.min(D.idleRpm, D.torque[0][0]),
+    hi: Math.max(D.limiter, D.torque[D.torque.length - 1][0]),
+    nm: Math.max(1, ...D.torque.map((p) => p[1])) * HEADROOM,
   };
+}
+
+// Plot coordinates are percentages of its box (the svg's viewBox is 0–100 both ways).
+const plotX = (v: CurveView, rpm: number) => ((rpm - v.lo) / (v.hi - v.lo)) * 100;
+const plotY = (value: number, max: number) => 98 - (value / max) * 96;
+const plotValue = (y: number, max: number) => ((98 - y) / 96) * max;
+
+/** Torque (red) and power (amber) from idle to the limiter, power scaled to its own peak; the redline dashed. */
+function curveSvg(D: CarSpec['drivetrain'], v: CurveView): { svg: string; key: string } {
+  const xs = Array.from({ length: 121 }, (_, i) => v.lo + ((v.hi - v.lo) * i) / 120);
+  const hp = xs.map((r) => powerHp(D, r));
+  const hpPeak = Math.max(...hp, 1e-6);
+  const pt = (rpm: number, y: number, max: number) => `${plotX(v, rpm).toFixed(2)},${plotY(y, max).toFixed(2)}`;
+  // Torque is straight between its points and flat past the ends (torqueAt), so drawn through them exactly.
+  const c = D.torque;
+  const tq = [[v.lo, c[0][1]], ...c, [v.hi, c[c.length - 1][1]]].map(([r, t]) => pt(r, t, v.nm)).join(' ');
+  const pw = xs.map((r, i) => pt(r, hp[i], hpPeak * HEADROOM)).join(' ');
   // Peak torque at its curve point; peak power sampled, to the nearest 50 rpm.
-  const [nmRpm, nmPeak] = D.torque.reduce((a, p) => (p[1] > a[1] ? p : a));
-  const hpRpm = Math.round(xs[hp.indexOf(Math.max(...hp))] / 50) * 50;
-  const red = (((D.redline - lo) / (hi - lo)) * W).toFixed(1);
-  return (
-    `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">` +
-    `<line x1="${red}" x2="${red}" y1="0" y2="${H}" class="tun-redline"/>` +
-    `<polyline points="${line(tq)}" class="tun-tq"/><polyline points="${line(hp)}" class="tun-pw"/></svg>` +
-    `<div class="tun-plot-key"><span class="tun-tq-key">${Math.round(nmPeak)} N·m @ ${nmRpm}</span>` +
-    `<span class="tun-pw-key">${Math.round(Math.max(...hp))} hp @ ${hpRpm}</span><span>${Math.round(lo)}–${Math.round(hi)} rpm</span></div>`
-  );
+  const [nmRpm, nmPeak] = c.reduce((a, p) => (p[1] > a[1] ? p : a));
+  const hpRpm = Math.round(xs[hp.indexOf(hpPeak)] / 50) * 50;
+  const red = plotX(v, D.redline).toFixed(2);
+  return {
+    svg:
+      `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">` +
+      `<line x1="${red}" x2="${red}" y1="0" y2="100" class="tun-redline"/>` +
+      `<polyline points="${tq}" class="tun-tq"/><polyline points="${pw}" class="tun-pw"/></svg>`,
+    key:
+      `<span class="tun-tq-key">${Math.round(nmPeak)} N·m @ ${nmRpm}</span>` +
+      `<span class="tun-pw-key">${Math.round(hpPeak)} hp @ ${hpRpm}</span><span>${Math.round(v.lo)}–${Math.round(v.hi)} rpm</span>`,
+  };
 }
