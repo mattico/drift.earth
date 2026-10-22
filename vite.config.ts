@@ -112,5 +112,8 @@ export default defineConfig(({ mode }) => ({
   base: basePath(),
   envPrefix: ['VITE_', 'MAPS_'],
   plugins: [traceSink(loadEnv(mode, process.cwd(), '').MAPS_API_KEY), siteUrl(), reloadWorldCode()],
-  server: { watch: { ignored: ['**/traces/**'] } },
+  // Agent worktrees (.claude/worktrees/) are whole checkouts inside the root:
+  // keep the watcher and the dependency scan out of them.
+  server: { watch: { ignored: ['**/traces/**', '**/.claude/worktrees/**'] } },
+  optimizeDeps: { entries: ['index.html'] },
 }));
