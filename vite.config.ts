@@ -67,7 +67,7 @@ function traceSink(key: string | undefined): Plugin {
  * src/hot.ts, reload the page instead.
  */
 function reloadWorldCode(): Plugin {
-  const reloads = /\/src\/(hot|world\/(tilesWorld|practiceWorld|meshBounds))\.ts$/;
+  const reloads = /\/src\/(hot|world\/(tilesWorld|practiceWorld|meshBounds|osmRoads|osmSurface|roads))\.ts$/;
   return {
     name: 'drift-reload-world',
     apply: 'serve',
