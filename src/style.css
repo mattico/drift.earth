@@ -147,25 +147,164 @@ body {
   }
 }
 
-.speedo {
+/* Tach + gear selector, bottom right. */
+.cluster {
   position: absolute;
   right: 16px;
   bottom: 44px;
-  padding: 8px 18px 10px;
-  text-align: right;
-  min-width: 120px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
 }
-.speedo-value {
-  font-size: 44px;
+.tach {
+  position: relative;
+  width: 172px;
+  height: 172px;
+  border-radius: 50%;
+  transition: box-shadow 0.08s;
+}
+.tach svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.tach-ring {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 4;
+}
+.tach-red {
+  fill: none;
+  stroke: var(--bad);
+  stroke-width: 7;
+}
+.tach-tick {
+  stroke: rgba(255, 255, 255, 0.6);
+  stroke-width: 2;
+}
+.tach-tick.red {
+  stroke: var(--bad);
+}
+.tach-num {
+  fill: var(--muted);
+  font: 700 13px Inter, system-ui, sans-serif;
+  text-anchor: middle;
+}
+.tach-needle line {
+  stroke: var(--accent);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+.tach-needle circle {
+  fill: var(--accent);
+}
+/* Shift light (manual, near redline) and the limiter's fuel cut. */
+.tach.shift {
+  box-shadow: 0 0 0 2px var(--accent-2), 0 0 22px rgba(255, 210, 63, 0.55);
+}
+.tach.limit {
+  box-shadow: 0 0 0 3px var(--bad), 0 0 26px rgba(255, 90, 90, 0.7);
+}
+/* Gear above the needle hub, speed in the open gap at the bottom of the dial. */
+.tach-center {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  text-align: center;
+}
+.tach-gear {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 25%;
+  font-size: 34px;
   font-weight: 900;
-  font-variant-numeric: tabular-nums;
   line-height: 1;
-  letter-spacing: -0.03em;
 }
-.speedo-unit {
-  font-size: 12px;
+.tach-speed {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 11%;
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.tach-speed small {
+  margin-left: 3px;
+  font-size: 10px;
   color: var(--muted);
   font-weight: 700;
+}
+.gearbox {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  pointer-events: auto;
+}
+.gb-mode {
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 6px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.gearbox.manual .gb-mode {
+  color: var(--accent-2);
+  border-color: rgba(255, 210, 63, 0.5);
+}
+.gb-gears {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.gb-gears span {
+  width: 28px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 18px;
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.35);
+}
+.gb-gears span.on {
+  color: #fff;
+  background: var(--accent);
+}
+.gearbox.refused .gb-gears span.on {
+  background: var(--bad);
+  animation: gb-shake 0.25s;
+}
+@keyframes gb-shake {
+  25% {
+    transform: translateX(-3px);
+  }
+  75% {
+    transform: translateX(3px);
+  }
+}
+/* ▼▲ only where there's no Q/E: touch screens, in manual. */
+.gb-shift {
+  display: none;
+  gap: 4px;
+}
+.gb-shift button {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 13px;
+  touch-action: manipulation;
 }
 
 .status {
@@ -643,10 +782,15 @@ input:focus {
   .hints {
     display: none;
   }
-  .speedo {
+  .cluster {
     bottom: auto;
     top: 16px;
     right: 16px;
+    align-items: flex-start;
+  }
+  .gearbox.manual .gb-shift {
+    display: flex;
+    flex-direction: column;
   }
 }
 
@@ -654,10 +798,21 @@ input:focus {
   .hints {
     display: none;
   }
-  .speedo {
+  .cluster {
     bottom: auto;
     top: 16px;
     right: 16px;
+    align-items: flex-start;
+  }
+  .tach {
+    width: 124px;
+    height: 124px;
+  }
+  .tach-gear {
+    font-size: 24px;
+  }
+  .tach-speed {
+    font-size: 14px;
   }
   .menu-panel {
     padding: 20px;

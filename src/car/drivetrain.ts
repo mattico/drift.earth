@@ -91,16 +91,16 @@ export class Drivetrain {
   }
 
   /**
-   * `vF` is forward speed; `wheelSpeed` the driven wheels' surface speed (above
-   * |vF| when sliding). `reverse` while backing up under the brake key.
+   * `wheelSpeed` is the driven wheels' surface speed (above the forward speed
+   * when sliding). `reverse` while backing up under the brake key.
    */
-  update(dt: number, vF: number, wheelSpeed: number, throttle: number, reverse: boolean, airborne: boolean): DriveOutput {
+  update(dt: number, wheelSpeed: number, throttle: number, reverse: boolean, airborne: boolean, drifting: boolean): DriveOutput {
     this.refused = Math.max(0, this.refused - dt);
     this.autoHold = Math.max(0, this.autoHold - dt);
     if (reverse) this.gear = -1;
     else if (this.gear < 0) this.gear = 1;
 
-    if (this.mode === 'auto' && !reverse && this.shiftTimer <= 0 && this.autoHold <= 0) this.autoShift(wheelSpeed, throttle);
+    if (this.mode === 'auto' && !reverse && this.shiftTimer <= 0 && this.autoHold <= 0) this.autoShift(wheelSpeed, drifting ? 1 : throttle);
 
     const ratio = this.gear < 0 ? D.reverse : D.gears[this.gear - 1];
     const toAccel = (torque: number) => (torque * ratio * D.finalDrive * D.efficiency) / D.wheelRadius / D.mass;
@@ -147,11 +147,17 @@ export class Drivetrain {
     return { torque: torqueAt(this.engineRpm), hp: powerHp(this.engineRpm) };
   }
 
+  /** Sliding, the box shifts as if at full throttle so lifting to feather doesn't short-shift. */
   private autoShift(wheelSpeed: number, throttle: number): void {
     const rpm = this.wheelRpm(wheelSpeed);
     const up = MathUtils.lerp(D.autoUpRpm[0], D.autoUpRpm[1], throttle);
     const down = MathUtils.lerp(D.autoDownRpm[0], D.autoDownRpm[1], throttle);
-    if (rpm > up && this.gear < D.gears.length) this.shift(this.gear + 1);
+    if (rpm > up && this.gear < D.gears.length) {
+      // Several gears at once if far over (e.g. spawned already moving).
+      let g = this.gear + 1;
+      while (g < D.gears.length && this.wheelRpm(wheelSpeed, g) > D.redline) g++;
+      this.shift(g);
+    }
     else if (rpm < down && this.gear > 1 && this.wheelRpm(wheelSpeed, this.gear - 1) < D.autoUpRpm[1] - 400) this.shift(this.gear - 1);
   }
 

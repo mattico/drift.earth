@@ -61,21 +61,17 @@ export class CarAudio {
     return this.muted;
   }
 
-  /** speed m/s, throttle 0..1, slide 0..1 */
-  update(speed: number, throttle: number, slide: number, active: boolean): void {
+  /** rpm as a fraction of redline, throttle 0..1, slide 0..1; `limiting` while the rev limiter cuts. */
+  update(rpm: number, throttle: number, slide: number, active: boolean, limiting = false): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
-    // Fake 5-speed gearbox: rpm sawtooths with speed.
-    const gearSpan = 9.2;
-    const gear = Math.min(4, Math.floor(speed / gearSpan));
-    const inGear = Math.min(1, (speed - gear * gearSpan) / gearSpan);
-    const rpm = speed < 0.5 ? 0.15 : 0.3 + 0.7 * inGear;
-    const f = 38 + rpm * 120 + throttle * 8;
+    const f = 30 + rpm * 140 + throttle * 6;
     this.engineA.frequency.setTargetAtTime(f, t, 0.05);
     this.engineB.frequency.setTargetAtTime(f * 0.5, t, 0.05);
     this.engineFilter.frequency.setTargetAtTime(500 + throttle * 1400 + rpm * 600, t, 0.08);
-    this.engineGain.gain.setTargetAtTime(active ? 0.08 + throttle * 0.07 : 0, t, 0.1);
+    // The limiter's fuel cut drops the note out for a moment.
+    this.engineGain.gain.setTargetAtTime(active ? (limiting ? 0.04 : 0.08 + throttle * 0.07) : 0, t, limiting ? 0.01 : 0.1);
     this.squealGain.gain.setTargetAtTime(active ? Math.min(1, slide) * 0.16 : 0, t, 0.06);
     this.squealFilter.frequency.setTargetAtTime(1100 + slide * 700, t, 0.1);
   }

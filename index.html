@@ -20,14 +20,27 @@
         <div class="combo-meta"><span id="combo-mult">×1</span> · <span id="combo-angle">0°</span></div>
       </div>
       <div id="toast" class="toast" hidden></div>
-      <div class="speedo panel-lite">
-        <div class="speedo-value" id="speed">0</div>
-        <div class="speedo-unit">km/h</div>
+      <div class="cluster">
+        <div class="gearbox panel-lite" id="gearbox">
+          <button class="gb-mode" id="gb-mode" type="button" title="Automatic / manual (T)">AUTO</button>
+          <div class="gb-gears" id="gb-gears"></div>
+          <div class="gb-shift">
+            <button id="gb-down" type="button" aria-label="Shift down">▼</button>
+            <button id="gb-up" type="button" aria-label="Shift up">▲</button>
+          </div>
+        </div>
+        <div class="tach panel-lite" id="tach">
+          <svg viewBox="0 0 200 200" id="tach-dial" aria-hidden="true"></svg>
+          <div class="tach-center">
+            <div class="tach-gear" id="tach-gear">1</div>
+            <div class="tach-speed"><span id="speed">0</span><small>km/h</small></div>
+          </div>
+        </div>
       </div>
       <div id="status" class="status" hidden></div>
       <div class="hints panel-lite" id="hints">
         <b>W/S</b> gas · brake/reverse &nbsp; <b>A/D</b> steer &nbsp; <b>Space</b> handbrake<br />
-        <b>R</b> reset &nbsp; <b>C</b> camera &nbsp; <b>wheel/+/-</b> zoom &nbsp; <b>M</b> mute &nbsp; <b>F3</b> debug &nbsp; <b>Esc</b> menu
+        <b>Q/E</b> shift (manual) &nbsp; <b>T</b> auto &nbsp; <b>R</b> reset &nbsp; <b>C</b> camera &nbsp; <b>wheel/+/-</b> zoom &nbsp; <b>M</b> mute &nbsp; <b>F3</b> debug &nbsp; <b>Esc</b> menu
       </div>
     </div>
 

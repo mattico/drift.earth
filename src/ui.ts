@@ -1,3 +1,5 @@
+import type { ShiftMode } from './car/drivetrain';
+import { DRIVETRAIN } from './config';
 import { parseCoordinates, SPOTS, type Spot } from './locations';
 import { PlaceSearch } from './places';
 import type { ScoreState } from './scoring';
@@ -5,6 +7,26 @@ import type { ScoreState } from './scoring';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const fmt = new Intl.NumberFormat('en-US');
+
+export interface DriveDisplay {
+  rpm: number;
+  gear: number;
+  mode: ShiftMode;
+  limiting: boolean;
+  /** A manual downshift was just refused (it would over-rev). */
+  refused: boolean;
+}
+
+// Tach geometry: 0…TACH_MAX rpm over a 270° sweep, 0 at lower left.
+const TACH_MAX = 8000;
+const TACH_START = -135;
+const TACH_SWEEP = 270;
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const tachAngle = (rpm: number) => TACH_START + (TACH_SWEEP * Math.min(rpm, TACH_MAX + 200)) / TACH_MAX;
+const polar = (r: number, deg: number): [number, number] => {
+  const a = (deg * Math.PI) / 180;
+  return [100 + r * Math.sin(a), 100 - r * Math.cos(a)];
+};
 
 export class Hud {
   private readonly root = $('hud');
@@ -23,8 +45,94 @@ export class Hud {
   private readonly loadingTitle = $('loading-title');
   private readonly loadingFill = $('loading-fill');
   private readonly touch = $('touch');
+  private readonly tach = $('tach');
+  private readonly tachGear = $('tach-gear');
+  private readonly gearbox = $('gearbox');
+  private readonly gbMode = $('gb-mode');
+  private readonly gearEls = new Map<number, HTMLElement>();
+  private needle!: SVGGElement;
   private lastAttribution = '';
   private lastStatus = '';
+  private lastGear = NaN;
+  private lastMode = '';
+
+  constructor() {
+    this.buildTach();
+    const gears = $('gb-gears');
+    for (const g of [...DRIVETRAIN.gears.map((_, i) => DRIVETRAIN.gears.length - i), -1]) {
+      const el = document.createElement('span');
+      el.textContent = g < 0 ? 'R' : String(g);
+      gears.append(el);
+      this.gearEls.set(g, el);
+    }
+  }
+
+  /** Wires the gear selector's buttons (mode toggle, and ▼▲ on touch screens). */
+  bindGearbox(request: (kind: 'up' | 'down' | 'mode') => void): void {
+    const bind = (id: string, kind: 'up' | 'down' | 'mode') => {
+      const el = $(id);
+      el.addEventListener('click', () => {
+        request(kind);
+        // Keep focus off the button so Space stays the handbrake.
+        el.blur();
+      });
+    };
+    bind('gb-mode', 'mode');
+    bind('gb-up', 'up');
+    bind('gb-down', 'down');
+  }
+
+  setDrive(d: DriveDisplay): void {
+    this.needle.setAttribute('transform', `rotate(${tachAngle(d.rpm).toFixed(1)} 100 100)`);
+    this.tach.classList.toggle('shift', d.mode === 'manual' && d.rpm > DRIVETRAIN.redline - 500);
+    this.tach.classList.toggle('limit', d.limiting);
+    this.gearbox.classList.toggle('refused', d.refused);
+    if (d.gear !== this.lastGear) {
+      this.gearEls.get(this.lastGear)?.classList.remove('on');
+      this.gearEls.get(d.gear)?.classList.add('on');
+      this.tachGear.textContent = d.gear < 0 ? 'R' : String(d.gear);
+      this.lastGear = d.gear;
+    }
+    if (d.mode !== this.lastMode) {
+      this.gbMode.textContent = d.mode === 'auto' ? 'AUTO' : 'MANUAL';
+      this.gearbox.classList.toggle('manual', d.mode === 'manual');
+      this.lastMode = d.mode;
+    }
+  }
+
+  private buildTach(): void {
+    const svg = $('tach-dial') as unknown as SVGSVGElement;
+    const el = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>) => {
+      const e = document.createElementNS(SVG_NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+      svg.append(e);
+      return e;
+    };
+    const arc = (r: number, from: number, to: number) => {
+      const [x0, y0] = polar(r, tachAngle(from));
+      const [x1, y1] = polar(r, tachAngle(to));
+      const large = tachAngle(to) - tachAngle(from) > 180 ? 1 : 0;
+      return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+    };
+    el('path', { d: arc(88, 0, TACH_MAX), class: 'tach-ring' });
+    el('path', { d: arc(88, DRIVETRAIN.redline, TACH_MAX), class: 'tach-red' });
+    for (let rpm = 0; rpm <= TACH_MAX; rpm += 500) {
+      const major = rpm % 1000 === 0;
+      const [x0, y0] = polar(major ? 74 : 79, tachAngle(rpm));
+      const [x1, y1] = polar(84, tachAngle(rpm));
+      el('line', { x1: x0, y1: y0, x2: x1, y2: y1, class: rpm >= DRIVETRAIN.redline ? 'tach-tick red' : 'tach-tick' });
+      if (major) {
+        const [tx, ty] = polar(60, tachAngle(rpm));
+        el('text', { x: tx, y: ty + 4.5, class: 'tach-num' }).textContent = String(rpm / 1000);
+      }
+    }
+    this.needle = el('g', { class: 'tach-needle' });
+    const line = document.createElementNS(SVG_NS, 'line');
+    for (const [k, v] of Object.entries({ x1: 100, y1: 112, x2: 100, y2: 20 })) line.setAttribute(k, String(v));
+    const hub = document.createElementNS(SVG_NS, 'circle');
+    for (const [k, v] of Object.entries({ cx: 100, cy: 100, r: 5 })) hub.setAttribute(k, String(v));
+    this.needle.append(line, hub);
+  }
 
   show(visible: boolean): void {
     this.root.hidden = !visible;

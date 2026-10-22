@@ -11,15 +11,13 @@ export const PHYSICS = {
   cornerX: 0.78, // ground-probe offsets (≈ wheel contact patches)
   cornerZ: 1.3,
 
-  // Longitudinal
-  topSpeed: 46,
+  // Longitudinal (engine force comes from DRIVETRAIN)
+  topSpeed: 50, // roughly where drag balances power; scales camera pull-back
   topSpeedReverse: 12,
-  engineAccel: 9.5,
   brakeDecel: 16,
   reverseAccel: 5,
   rollingDecel: 0.35,
-  dragK: 0.0006,
-  engineBrake: 0.8,
+  dragK: 0.00135,
   handbrakeDecel: 4,
 
   // Steering
@@ -51,6 +49,11 @@ export const PHYSICS = {
   driftCarveAngle: 40 * (Math.PI / 180),
   driftScrub: 0.3,
   driftFeatherTau: 0.12,
+  // Throttle's share of drift angle and rotation scales with the drive the
+  // current gear can deliver, relative to this (m/s²): the wrong gear bogs.
+  driftPowerRef: 6,
+  // Driven-wheel overspeed while sliding at full throttle (flares the revs).
+  driftWheelspin: 0.12,
   driftEntryTime: 0.35, // drift yaw authority ramps in over this long
   // After a drift starts, the handbrake adds no extra angle or rotation for
   // this long, then fades its oversteer in over driftHandbrakeRamp.
@@ -110,6 +113,50 @@ export const PHYSICS = {
   blobTopSlack: 0.3, // a blob's top must be within this of where the probe hit it
   blobGroundNormalY: 0.97, // only on near-flat ground (roads), not ramps or hills
   impactThreshold: 5,
+};
+
+/**
+ * Engine and gearbox. 420 N·m peak at 5000 rpm, 354 hp peak at 7100.
+ * Redline speeds: 77, 106, 137, 165, 191, 217 km/h (top speed is drag-limited).
+ */
+export const DRIVETRAIN = {
+  mass: 1250,
+  wheelRadius: 0.33,
+  finalDrive: 3.9,
+  gears: [3.1, 2.25, 1.75, 1.45, 1.25, 1.1],
+  reverse: 3.3,
+  efficiency: 0.88,
+  idleRpm: 900,
+  redline: 7500,
+  limiter: 7800,
+  /** Fuel cut each time the limiter is hit (s). */
+  limiterCut: 0.06,
+  /** Below this wheel rpm the clutch slips; at full throttle the engine holds launchRpm. */
+  clutchRpm: 1300,
+  launchRpm: 4200,
+  /** rpm → N·m. */
+  torque: [
+    [800, 230],
+    [1500, 285],
+    [2500, 345],
+    [3500, 395],
+    [4500, 418],
+    [5000, 420],
+    [5800, 408],
+    [6500, 385],
+    [7200, 350],
+    [7800, 320],
+  ] as Array<[number, number]>,
+  /** Engine braking torque at redline, scaling with rpm (stronger in lower gears). */
+  engineBrakeTorque: 95,
+  /** Traction limit on drive acceleration (m/s²). */
+  maxAccel: 10.5,
+  shiftTime: 0.14,
+  /** Auto box: shift up / down at these rpm, from light to full throttle. */
+  autoUpRpm: [3800, 7200],
+  autoDownRpm: [1600, 4300],
+  /** Minimum time between automatic shifts. */
+  autoHold: 0.6,
 };
 
 export const CAMERA = {

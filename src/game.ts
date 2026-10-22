@@ -13,7 +13,7 @@ import { ChaseCamera, wrapAngle } from './camera';
 import { CarModel } from './car/carModel';
 import { TyreEffects, type WheelSample } from './car/effects';
 import { CarPhysics, type CarInput } from './car/physics';
-import { CAMERA, PHYSICS, SCORING } from './config';
+import { CAMERA, DRIVETRAIN, PHYSICS, SCORING } from './config';
 import { DebugTools } from './debug/tools';
 import { InputManager } from './input';
 import { DriftScore } from './scoring';
@@ -143,6 +143,7 @@ export class Game {
     this.score.onFail = (lost) => this.hud.toast(`Crashed! −${lost.toLocaleString('en-US')}`, 'bad');
 
     this.input = new InputManager(document.getElementById('touch')!);
+    this.hud.bindGearbox((kind) => (this.input.shiftQueue[kind] = true));
     // Browsers only allow audio after a gesture; the default spot auto-starts without one.
     const unlock = () => {
       if (this.phase === 'driving') this.audio.start();
@@ -286,6 +287,10 @@ export class Game {
       } else {
         if (actions.reset) this.resetToCrumb(3);
         if (actions.cameraCycle) this.chase.cyclePitch();
+        const box = this.physics.drivetrain;
+        if (actions.shiftUp) box.shiftUp();
+        if (actions.shiftDown) box.shiftDown(this.physics.vForward);
+        if (actions.gearMode) box.toggleMode();
         if (actions.zoom !== 1) this.chase.zoomBy(actions.zoom);
         this.updateDriving(dt, inp);
       }
@@ -467,7 +472,9 @@ export class Game {
     this.updateEffects(dt * scale, x, z, heading, inp.handbrake);
     const renderPos = new Vector3(x, y, z);
     this.chase.follow(dt, renderPos, heading, P.vel, P.drifting);
-    this.audio.update(P.speed, inp.throttle, P.airborne ? 0 : Math.min(1, Math.abs(P.vLateral) / 8), true);
+    const box = P.drivetrain;
+    this.audio.update(box.rpm / DRIVETRAIN.redline, inp.throttle, P.airborne ? 0 : Math.min(1, Math.abs(P.vLateral) / 8), true, box.limiting);
+    this.hud.setDrive({ rpm: box.rpm, gear: box.gear, mode: box.mode, limiting: box.limiting, refused: box.refused > 0 });
 
     // Frozen or slowed physics must not trip the airborne/stuck timers.
     this.trackCrumbs(dt * scale, inp.throttle);
@@ -582,6 +589,11 @@ export class Game {
       `pos ${P.pos.x.toFixed(1)} ${P.pos.y.toFixed(1)} ${P.pos.z.toFixed(1)}  hdg ${(-P.heading * MathUtils.RAD2DEG).toFixed(0)}°`,
       `v ${(P.speed * 3.6).toFixed(0)} km/h  vF ${P.vForward.toFixed(1)} vL ${P.vLateral.toFixed(1)}  slip ${(P.slip * MathUtils.RAD2DEG).toFixed(0)}°`,
       `drift ${P.drifting} air ${P.airborne} wait ${P.waiting}  n.y ${P.groundNormal.y.toFixed(3)}`,
+      (() => {
+        const box = P.drivetrain;
+        const out = box.output();
+        return `${box.mode} gear ${box.gear < 0 ? 'R' : box.gear}  ${Math.round(box.rpm)} rpm  ${out.torque.toFixed(0)} N·m  ${out.hp.toFixed(0)} hp  drive ${box.capacity.toFixed(1)} m/s²${box.limiting ? '  LIMITER' : ''}`;
+      })(),
       `cam d ${this.chase.distance.toFixed(0)} m  pitch ${(this.chase.pitch * MathUtils.RAD2DEG).toFixed(0)}°  zoom ${this.chase.zoom.toFixed(2)}`,
       c ? `colliders ${c.candidateCount}  bvh built ${c.bvhBuilds} (last ${c.bvhMs.toFixed(1)} ms)` : '',
       this.world?.debugInfo() ?? '',

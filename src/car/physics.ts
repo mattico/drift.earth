@@ -1,5 +1,6 @@
 import { MathUtils, Vector3, type Matrix4 } from 'three';
 import { PHYSICS as P } from '../config';
+import { Drivetrain } from './drivetrain';
 import type { Collider, RayHit } from '../world/collider';
 
 export interface CarInput {
@@ -129,6 +130,7 @@ export class CarPhysics {
   /** Horizontal velocity (y unused). */
   readonly vel = new Vector3();
   vy = 0;
+  readonly drivetrain = new Drivetrain();
   heading = 0;
   prevHeading = 0;
   yawRate = 0;
@@ -199,6 +201,7 @@ export class CarPhysics {
     this.drifting = false;
     this.gripBlend = 1;
     this.throttleF = this.handbrakeF = this.steerF = 0;
+    this.drivetrain.reset();
     this.overpassCache.clear();
     this.blobCache.clear();
     this.blobs.length = 0;
@@ -266,19 +269,20 @@ export class CarPhysics {
     const rate = (Math.abs(target) > Math.abs(this.steer) ? P.steerRate : P.steerReturn) / (1 + absVF / 25);
     this.steer += MathUtils.clamp(target - this.steer, -rate * dt, rate * dt);
 
-    // Longitudinal forces.
+    // Longitudinal forces. While sliding, the driven wheels turn at the car's
+    // speed (plus some wheelspin), not just its forward component.
+    const reversing = vF < -0.3 || (input.brake > 0 && input.throttle === 0 && vF < 0.5);
+    const wheelSpeed = this.drifting ? speed * (1 + P.driftWheelspin * this.throttleF) : vF;
+    const engine = this.drivetrain.update(dt, wheelSpeed, input.throttle, reversing, this.airborne, this.drifting);
     let aF = 0;
-    if (input.throttle > 0) {
-      aF += (vF < -0.5 ? P.brakeDecel : P.engineAccel * Math.max(0, 1 - (vF / P.topSpeed) ** 2)) * input.throttle;
-    }
+    if (input.throttle > 0) aF += vF < -0.5 ? P.brakeDecel * input.throttle : engine.drive;
     if (input.brake > 0) {
       if (vF > 0.5) aF -= P.brakeDecel * input.brake;
       else if (vF > -P.topSpeedReverse) aF -= P.reverseAccel * input.brake;
     }
     vF += aF * dt * traction;
     // Resistances always oppose motion and never reverse it.
-    let resist = P.rollingDecel + P.dragK * vF * vF;
-    if (input.throttle === 0 && input.brake === 0) resist += P.engineBrake;
+    let resist = P.rollingDecel + P.dragK * vF * vF + engine.engineBrake;
     if (input.handbrake) resist += P.handbrakeDecel;
     vF = moveToward(vF, 0, resist * dt * (traction || 0.1));
 
@@ -324,13 +328,14 @@ export class CarPhysics {
         // the pull that kicks the car into the slide doesn't also over-rotate it.
         const hbDelay = P.driftHandbrakeDelay;
         const handbrake = this.handbrakeF * MathUtils.smoothstep(this.driftAge, hbDelay, hbDelay + P.driftHandbrakeRamp);
-        const angle =
-          Math.min(P.driftAngleMax, P.driftAngleThrottle * this.throttleF + P.driftAngleHandbrake * handbrake) * engaged;
+        // Power oversteer needs power: a high gear at low revs bogs the slide.
+        const power = this.throttleF * MathUtils.clamp(this.drivetrain.capacity / P.driftPowerRef, 0.35, 1.2);
+        const angle = Math.min(P.driftAngleMax, P.driftAngleThrottle * power + P.driftAngleHandbrake * handbrake) * engaged;
         if (Math.abs(beta) > 0.1) this.driftDir = Math.sign(beta);
         this.driftTarget = angle * this.driftDir;
         // Power and the handbrake also rotate the car directly, swinging the rear
         // further out (−driftDir is the way the nose is turning).
-        const oversteer = (P.driftThrottleYaw * this.throttleF + P.driftHandbrakeYaw * handbrake) * engaged;
+        const oversteer = (P.driftThrottleYaw * power + P.driftHandbrakeYaw * handbrake) * engaged;
         // Steering into the slide stops adding rotation as the angle nears the
         // cap, so full lock with everything held can't hang the car sideways.
         let steerYaw = this.steerF * P.driftYawMax * Math.min(1, speed / 10);

@@ -39,6 +39,9 @@ export const FRAME_COLUMNS = [
   'wallGe',
   'impact',
   'colliders',
+  'rpm',
+  /** −1 reverse; +10 when the gearbox is in manual. */
+  'gear',
 ] as const;
 
 const STRIDE = FRAME_COLUMNS.length;
@@ -131,6 +134,8 @@ export class TraceRecorder {
     b[o + COL.wallGe] = w.pen > 0 ? w.geometricError : 0;
     b[o + COL.impact] = p.impact;
     b[o + COL.colliders] = colliders;
+    b[o + COL.rpm] = p.drivetrain.rpm;
+    b[o + COL.gear] = p.drivetrain.gear + (p.drivetrain.mode === 'manual' ? 10 : 0);
     this.head = (this.head + 1) % this.capacity;
     if (this.count < this.capacity) this.count++;
   }

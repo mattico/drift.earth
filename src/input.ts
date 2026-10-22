@@ -9,6 +9,10 @@ export interface Actions {
   /** Drop a marker into the debug trace. */
   mark: boolean;
   saveTrace: boolean;
+  /** Gear changes (either switches the gearbox to manual) and auto/manual toggle. */
+  shiftUp: boolean;
+  shiftDown: boolean;
+  gearMode: boolean;
   /** Multiplicative zoom change requested this frame (1 = none). */
   zoom: number;
 }
@@ -24,6 +28,8 @@ export class InputManager {
   private wheel = 0;
   private readonly touch = { steer: 0, throttle: 0, brake: 0, handbrake: false, pause: false, reset: false };
   private readonly padPrev: boolean[] = [];
+  /** Shift requests from on-screen buttons (the gear selector). */
+  readonly shiftQueue = { up: false, down: false, mode: false };
   enabled = true;
 
   constructor(private readonly touchRoot: HTMLElement) {
@@ -118,6 +124,9 @@ export class InputManager {
       debug: p('F3', 'Backquote'),
       mark: p('F8'),
       saveTrace: p('F9'),
+      shiftUp: p('KeyE'),
+      shiftDown: p('KeyQ'),
+      gearMode: p('KeyT'),
       zoom: 1,
     };
     if (k('Equal', 'NumpadAdd')) actions.zoom *= 0.98;
@@ -131,6 +140,10 @@ export class InputManager {
     if (this.touch.pause) actions.pause = true;
     if (this.touch.reset) actions.reset = true;
     this.touch.pause = this.touch.reset = false;
+    if (this.shiftQueue.up) actions.shiftUp = true;
+    if (this.shiftQueue.down) actions.shiftDown = true;
+    if (this.shiftQueue.mode) actions.gearMode = true;
+    this.shiftQueue.up = this.shiftQueue.down = this.shiftQueue.mode = false;
     if (Math.abs(this.touch.steer) > Math.abs(steer)) steer = this.touch.steer;
     throttle = Math.max(throttle, this.touch.throttle);
     brake = Math.max(brake, this.touch.brake);
@@ -156,6 +169,8 @@ export class InputManager {
       if (edge(3)) actions.reset = true;
       if (edge(9)) actions.pause = true;
       if (edge(4)) actions.cameraCycle = true;
+      if (edge(1)) actions.shiftUp = true;
+      if (edge(2)) actions.shiftDown = true;
       const zoomAxis = pad.axes[3] ?? 0;
       if (Math.abs(zoomAxis) > 0.2) actions.zoom *= 1 + zoomAxis * 0.02;
       break;

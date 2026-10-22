@@ -45,6 +45,8 @@ The key ships to the browser, so restrict it by HTTP referrer, for example `http
 | Brake / reverse | S / ↓ | LT |
 | Steer | A D / ← → | Left stick |
 | Handbrake (drift) | Space | A / RB |
+| Shift down / up (switches to manual) | Q / E | X / B |
+| Back to automatic | T, or click AUTO/MANUAL | |
 | Reset to a recent spot | R | Y |
 | Camera tilt preset | C | LB |
 | Zoom | Mouse wheel, + / − | Right stick Y |
@@ -54,7 +56,13 @@ The key ships to the browser, so restrict it by HTTP referrer, for example `http
 | Mark the debug trace | F8 | |
 | Save the debug trace | F9 | |
 
-On touch devices an on-screen steering pad and GAS, BRAKE and DRIFT buttons appear.
+On touch devices an on-screen steering pad and GAS, BRAKE and DRIFT buttons appear. Tap AUTO/MANUAL on the gear selector to switch; in manual, ▼▲ buttons appear under it.
+
+**Gearbox:** the engine makes 420 N·m at 5,000 rpm and 354 hp at 7,100 rpm, with a 7,500 rpm redline and a limiter at 7,800. The six-speed box runs out at 77, 106, 137, 165, 191 and 217 km/h; top speed is about 180 km/h in 5th, limited by drag. 0–100 km/h takes 3.6 s.
+- **Automatic** is the default. It shifts later the harder you press, and holds its gear while sliding so feathering the throttle doesn't short-shift it.
+- **Manual:** pressing Q or E switches to manual. Each shift cuts drive for 0.14 s. A downshift that would over-rev is refused (the selector flashes red). In 1st the car sits on the limiter early. The tach rim glows yellow near redline and red on the limiter.
+- **Engine braking** grows with rpm, so a lower gear slows the car harder.
+- **The gear matters for drifting.** Throttle oversteer scales with the drive the current gear can deliver. Held at full throttle, a drift holds about 51° in 2nd and 44° in 3rd but bogs to 33° in 5th.
 
 **Drifting:** pull the handbrake while turning (or throw the car into a slide) to start a drift. Once sliding:
 - **The angle bends the line.** A sliding car carves round harder the further its rear hangs out (up to about 85°/s at 40° of slip, at any speed), scrubbing a little speed.
@@ -73,6 +81,7 @@ src/
   camera.ts          top-down chase camera
   config.ts          every tunable number
   car/physics.ts     kinematic arcade drift model, ground following, wall response
+  car/drivetrain.ts  torque curve, gearbox (auto/manual), clutch, rev limiter, engine braking
   car/carModel.ts    procedural low-poly car, x-ray silhouette, blob shadow
   car/effects.ts     skid-mark ribbons and tyre smoke
   world/tilesWorld.ts    Google 3D Tiles via 3d-tiles-renderer
