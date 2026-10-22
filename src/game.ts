@@ -22,6 +22,7 @@ import { DriftScore } from './scoring';
 import { MPH, type Hud } from './ui';
 import { Collider } from './world/collider';
 import { PracticeWorld } from './world/practiceWorld';
+import { findRoadSpot, type RoadSearch } from './world/roadSnap';
 import { createSky } from './world/sky';
 import { TilesWorld } from './world/tilesWorld';
 import type { World } from './world/types';
@@ -49,6 +50,12 @@ const FINE_TILE_ERROR = 1000;
 const RECENTER_STORAGE = 'drift.earth:recenter';
 /** localStorage key for headphones (3D) or speakers sound. */
 const HEADPHONES_STORAGE = 'drift.earth:headphones';
+/** Reset held this long (s) before the HUD says to keep holding for the road (a tap is shorter). */
+const HOLD_HINT = 0.15;
+/** How long (s) a one-off status message stays up. */
+const NOTICE_TIME = 3;
+/** resetToCrumb(n) for R and the auto-reset: crumbs younger than this (s) may be where the trouble started. */
+const CRUMB_AGE = 3;
 
 /** Exact spawn for deep links and repro links. */
 export interface SpawnOptions {
@@ -95,6 +102,10 @@ export class Game {
   private takeoff: { y: number; t: number } | null = null;
   /** Set after a big fall: no crumbs below this height until it expires, so R goes back up. */
   private fallGuard: { y: number; until: number } | null = null;
+  /** How long (s) reset has been held, for the "keep holding" hint. */
+  private resetHold = 0;
+  /** A short status message (road teleport failures), shown until `until`. */
+  private notice = { text: '', until: 0 };
   private spawnPos = new Vector3();
   private spawnHeading = 0;
   private locate = {
@@ -255,6 +266,7 @@ export class Game {
     this.car.root.visible = true;
     this.effects.liftAll();
     this.crumbs = [];
+    this.notice.until = 0;
     this.takeoff = this.fallGuard = null;
     this.stuckRef.pos.copy(pos);
     this.stuckRef.t = this.time;
@@ -370,8 +382,19 @@ export class Game {
     this.resetToCrumb(0);
   }
 
+  /** The pause menu's "Back to road". */
+  backToRoad(): void {
+    if (this.phase === 'paused') this.resume();
+    this.teleportToRoad();
+  }
+
   get canResume(): boolean {
     return this.phase === 'paused';
+  }
+
+  /** Whether the world has road data to teleport onto (it may still find no clear spot). */
+  get hasRoads(): boolean {
+    return !!this.world?.roads;
   }
 
   // --- Hot updates (dev only, see main.ts) --------------------------------------
@@ -485,7 +508,9 @@ export class Game {
       if (actions.pause) {
         this.pause();
       } else {
-        if (actions.reset) this.resetToCrumb(3);
+        if (actions.reset) this.resetToCrumb(CRUMB_AGE);
+        if (actions.roadReset) this.teleportToRoad();
+        this.resetHold = actions.resetHold;
         if (actions.cameraCycle) this.chase.cyclePitch(actions.cameraCycle, actions.cameraWrap);
         if (actions.cameraRecenter) this.setRecenter(!this.chase.recenter);
         this.chase.look(actions.look.x, actions.look.y, dt);
@@ -791,7 +816,7 @@ export class Game {
     this.stuckTime = this.time - ref.t;
 
     this.airTime = P.airborne ? this.airTime + dt : 0;
-    if (this.airTime > 4) this.resetToCrumb(3);
+    if (this.airTime > 4) this.resetToCrumb(CRUMB_AGE);
   }
 
   private resetToCrumb(secondsBack: number): void {
@@ -807,6 +832,45 @@ export class Game {
     const pos = crumb ? crumb.pos : this.spawnPos;
     const heading = crumb ? crumb.heading : this.spawnHeading;
     this.debug.event('reset', { secondsBack, from: this.physics.pos.toArray(), to: pos.toArray(), crumb: !!crumb });
+    this.placeCar(pos, heading);
+  }
+
+  /**
+   * Puts the car on the nearest clear spot on a real road (OSM), facing along
+   * it. Without road data, or with no spot that checks out, falls back to a
+   * breadcrumb. Returns the search (null without road data); public for
+   * scripted runs (tools/capture.mjs --setup "g.teleportToRoad()").
+   */
+  teleportToRoad(): RoadSearch | null {
+    if (this.phase !== 'driving') return null;
+    const P = this.physics;
+    const roads = this.world?.roads;
+    if (!roads || !this.collider) {
+      this.debug.event('road-teleport', { from: P.pos.toArray(), to: null, reason: 'no road data' });
+      this.resetToCrumb(CRUMB_AGE);
+      this.say('No road data here yet');
+      return null;
+    }
+    const t0 = performance.now();
+    const search = findRoadSpot(roads, this.collider, P.pos, P.heading, P.car.chassis);
+    this.debug.onRoadSearch(P.pos, search, performance.now() - t0);
+    const spot = search.spot;
+    if (!spot) {
+      this.resetToCrumb(CRUMB_AGE);
+      this.say('No clear road nearby');
+      return search;
+    }
+    this.placeCar(spot.pos, spot.heading);
+    // The next plain reset should come back here, but resetToCrumb only takes
+    // crumbs at least CRUMB_AGE old: backdate this one, and drop the newer
+    // ones (from wherever the car got stuck).
+    this.crumbs = this.crumbs.filter((c) => c.t <= this.time - CRUMB_AGE);
+    this.crumbs.push({ pos: spot.pos.clone(), heading: spot.heading, t: this.time - CRUMB_AGE });
+    return search;
+  }
+
+  /** Puts the car at rest at `pos` (on the ground) facing `heading`, as after a crash. */
+  private placeCar(pos: Vector3, heading: number): void {
     this.physics.reset(pos.clone().setY(pos.y + 0.3), heading);
     this.chase.snap(pos, heading, this.chase.distance);
     this.effects.liftAll();
@@ -815,6 +879,10 @@ export class Game {
     this.takeoff = this.fallGuard = null;
     this.stuckRef.pos.copy(pos);
     this.stuckRef.t = this.time;
+  }
+
+  private say(text: string): void {
+    this.notice = { text, until: this.time + NOTICE_TIME };
   }
 
   private applyRebase(m: Matrix4, yaw: number): void {
@@ -838,7 +906,12 @@ export class Game {
   private statusText(): string {
     const P = this.physics;
     if (P.waiting) return 'Loading terrain…';
-    if (this.stuckTime > 3) return { touch: 'Stuck? Tap ⟲ to reset', gamepad: 'Stuck? Press Y to reset', keyboard: 'Stuck? Press R to reset' }[this.input.device];
+    if (this.time < this.notice.until) return this.notice.text;
+    const roads = this.hasRoads;
+    if (roads && this.resetHold > HOLD_HINT) return 'Keep holding for the nearest road…';
+    const key = { touch: '⟲', gamepad: 'Y', keyboard: 'R' }[this.input.device];
+    const press = this.input.device === 'touch' ? `Tap ${key}` : `Press ${key}`;
+    if (this.stuckTime > 3) return roads ? `Stuck? ${press} to reset, hold ${key} for the nearest road` : `Stuck? ${press} to reset`;
     return '';
   }
 

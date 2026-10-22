@@ -14,6 +14,8 @@ import {
 } from 'three';
 import { PHYSICS as P } from '../config';
 import { Probe, type CarPhysics, type OverpassDecision, type WallRayDebug } from '../car/physics';
+import type { RoadClass } from '../world/roads';
+import type { RoadSearch, RoadVerdict } from '../world/roadSnap';
 import type { World } from '../world/types';
 
 export type FillMode = 'off' | 'height' | 'slope';
@@ -37,6 +39,8 @@ export interface OverlayLayers {
   trail: boolean;
   /** The live gauges over the game view (debug/gauges.ts; shown with the panel closed too). */
   gauges: boolean;
+  /** OSM road centrelines around the car and the last road teleport's tries. */
+  roads: boolean;
 }
 
 /** Colliders further than this from the car are left out of the overlay. */
@@ -196,6 +200,34 @@ const PROBE_COLORS: Record<Probe, number> = {
   [Probe.Drop]: 0x3070ff,
 };
 
+/** Main roads bright, minor ones dimmer, bridges violet. */
+export const ROAD_COLORS: Record<RoadClass | 'bridge', number> = {
+  motorway: 0xff9040,
+  trunk: 0xffb040,
+  primary: 0xffe060,
+  secondary: 0xfff0a0,
+  tertiary: 0xffffff,
+  minor: 0xd0d0d0,
+  raceway: 0xff60a0,
+  busway: 0x80c0ff,
+  service: 0x909090,
+  track: 0xa08060,
+  bridge: 0xb080ff,
+};
+
+export const ROAD_VERDICT_COLORS: Record<RoadVerdict, number> = {
+  ok: 0x40ff60,
+  'off the end': 0x606060,
+  'not loaded': 0x3070ff,
+  stacked: 0xa060ff,
+  'no flat ground': 0x40e0ff,
+  perched: 0xffe040,
+  roof: 0xc08040,
+  uneven: 0xffa020,
+  obstacle: 0xff50ff,
+  wall: 0xff3030,
+};
+
 export const RAY_COLORS: Record<WallRayDebug['verdict'], number> = {
   clear: 0xffffff,
   'steep-floor': 0x40e0ff,
@@ -243,6 +275,9 @@ export class DebugOverlay {
   private trailSteps = 0;
   /** Highest-priority trail state seen since the last point. */
   private trailPending = TRAIL_GRIP;
+  /** The last road teleport: where from, every spot tried, and where it went. */
+  private road: { from: Vector3; tries: Array<{ p: Vector3; found: boolean; verdict: RoadVerdict }>; to: Vector3 | null; heading: number } | null =
+    null;
 
   constructor() {
     const g = new BufferGeometry();
@@ -280,6 +315,7 @@ export class DebugOverlay {
     this.trailCount = 0;
     this.trailSteps = 0;
     this.trailPending = TRAIL_GRIP;
+    this.road = null;
   }
 
   private clearShadows(): void {
@@ -340,8 +376,25 @@ export class DebugOverlay {
     if (this.decisions.length > MAX_DECISIONS) this.decisions.shift();
   }
 
+  /** Keeps a road teleport's tries for the `roads` layer, until the next one. */
+  onRoadSearch(from: Vector3, search: RoadSearch, groundY: number): void {
+    const s = search.spot;
+    this.road = {
+      from: from.clone(),
+      // Spots without a surface height sit at the car's ground, so they still show.
+      tries: search.tried.map((t) => ({ p: new Vector3(t.x, t.y ?? groundY, t.z), found: t.y !== null, verdict: t.verdict })),
+      to: s ? s.pos.clone() : null,
+      heading: s?.heading ?? 0,
+    };
+  }
+
   applyMatrix(m: Matrix4): void {
     for (const c of this.contacts) c.p.applyMatrix4(m);
+    if (this.road) {
+      this.road.from.applyMatrix4(m);
+      this.road.to?.applyMatrix4(m);
+      for (const t of this.road.tries) t.p.applyMatrix4(m);
+    }
     // Decisions are short-lived; shifting them by the rebase keeps them in place.
     for (const d of this.decisions) {
       _v.fromArray(d.hit).applyMatrix4(m).toArray(d.hit);
@@ -374,6 +427,7 @@ export class DebugOverlay {
     if (layers.history) this.drawHistory();
     if (layers.overpass) this.drawDecisions();
     if (layers.tires) this.drawTires(p);
+    if (layers.roads) this.drawRoads(world, p);
     const g = this.lines.geometry;
     g.setDrawRange(0, this.segs * 2);
     (g.attributes.position as BufferAttribute).needsUpdate = true;
@@ -788,6 +842,38 @@ export class DebugOverlay {
       const alpha = 0.25 + (0.65 * k) / n;
       this.tri(ax - nx, ay, az - nz, ax + nx, ay, az + nz, bx + nx, by, bz + nz, col, alpha);
       this.tri(ax - nx, ay, az - nz, bx + nx, by, bz + nz, bx - nx, by, bz - nz, col, alpha);
+    }
+  }
+
+  /**
+   * Road centrelines within the overlay radius, just above the car's ground
+   * (OSM has no heights), and the last road teleport: each spot tried as a
+   * cross coloured by verdict (with a post where it found a surface), a line
+   * from where the car was, and an arrow for where it went.
+   */
+  private drawRoads(world: World, p: CarPhysics): void {
+    const y = p.groundY + 0.3;
+    world.roads?.forEachNear(p.pos.x, p.pos.z, RADIUS, ({ way, index }) => {
+      const k = index * 2;
+      const col = way.bridge ? ROAD_COLORS.bridge : ROAD_COLORS[way.cls];
+      this.seg(way.xz[k], y, way.xz[k + 1], way.xz[k + 2], y, way.xz[k + 3], col);
+    });
+    const r = this.road;
+    if (!r) return;
+    for (const t of r.tries) {
+      const col = ROAD_VERDICT_COLORS[t.verdict];
+      this.cross(t.p.x, t.p.y + 0.1, t.p.z, t.found ? 0.5 : 0.3, col);
+      if (t.found) this.seg(t.p.x, t.p.y, t.p.z, t.p.x, t.p.y + 1.5, t.p.z, col);
+    }
+    if (r.to) {
+      const { x, y: ty, z } = r.to;
+      const fx = -Math.sin(r.heading);
+      const fz = -Math.cos(r.heading);
+      const h = ty + 0.2;
+      this.seg(r.from.x, r.from.y + 0.5, r.from.z, x, ty + 0.5, z, 0xffffff);
+      this.seg(x - fx * 2, h, z - fz * 2, x + fx * 3, h, z + fz * 3, 0x40ff60);
+      this.seg(x + fx * 3, h, z + fz * 3, x + fx * 2 - fz * 0.8, h, z + fz * 2 + fx * 0.8, 0x40ff60);
+      this.seg(x + fx * 3, h, z + fz * 3, x + fx * 2 + fz * 0.8, h, z + fz * 2 - fx * 0.8, 0x40ff60);
     }
   }
 

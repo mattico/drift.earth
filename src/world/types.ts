@@ -1,4 +1,5 @@
 import type { Matrix4, Mesh, Object3D, PerspectiveCamera, Vector3 } from 'three';
+import type { RoadNetwork } from './roads';
 
 export interface RebaseResult {
   /** Maps old world-space positions to new world-space positions. */
@@ -44,5 +45,10 @@ export interface World {
   stats(): Record<string, number>;
   /** Real-world position of a world-space point, if the world has one. */
   geo(p: Vector3): Geo | null;
+  /**
+   * Drivable road centrelines around the focus, in world x/z; null until some
+   * have loaded. Kept up to date by update() and maybeRebase().
+   */
+  readonly roads: RoadNetwork | null;
   dispose(): void;
 }

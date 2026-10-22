@@ -65,6 +65,7 @@ Link previews (Open Graph and Twitter cards in `index.html`) show `public/og.jpg
 | Shift down / up (switches to manual) | Q / E | LB / RB |
 | Automatic / manual | T, or click AUTO/MANUAL | View |
 | Reset to a recent spot | R | Y |
+| Put the car on the nearest road | Hold R | Hold Y |
 | Camera tilt preset | C (wraps round) | D-pad ← / → (stops at either end) |
 | Look around (eases back when let go) | Drag with the mouse | Right stick |
 | Ease back on or off | | R3 |
@@ -78,6 +79,8 @@ Link previews (Open Graph and Twitter cards in `index.html`) show `public/og.jpg
 Any controller the browser gives the standard mapping works (Xbox, PlayStation, Switch Pro and most others in Chrome, Edge and Firefox); press a button so the browser reveals it. In the menu, the D-pad or left stick moves between buttons, A selects and B goes back (or resumes). The on-screen hints switch to the controller once you use it.
 
 **Minimap:** a heading-up road map sits in the bottom left (top left on touch screens), zooming out with speed. It doesn't appear on the practice track.
+
+**Back to the road:** stuck in a building or lost in a car park? Hold reset (R, Y or ⟲) for half a second: where a tap goes back to a recent spot, a hold puts the car on the nearest real road, facing along it in the direction closest to where you were heading. The pause menu has the same as **Back to road**. Roads come from OpenStreetMap (below); the spot is checked against the 3D mesh first (flat ground under all four wheels, nothing parked there or under it, not a roof over the road, no wall), sliding along the street or trying the next road if it isn't clear.
 
 **Seeing through cover:** when something hides the car from the camera (an overpass deck, a tunnel, a building), it shows through as a translucent, rim-lit ghost.
 
@@ -153,8 +156,11 @@ src/
   world/practiceWorld.ts offline test track
   world/collider.ts      BVH raycasts (three-mesh-bvh) against nearby tile meshes
   world/mapTiles.ts      2D map tile sessions and Web Mercator, for the minimap
+  world/osmRoads.ts      OpenStreetMap vector tiles (OpenFreeMap): loading, decoding, projection
+  world/roads.ts         road centrelines in a spatial hash: nearest road, walking along one
+  world/roadSnap.ts      picks a clear spot on the nearest road for "back to road"
   debug/trace.ts         always-on ring buffer of physics steps and events
-  debug/overlay.ts       collision wireframe, probe rays, contact history, tire and trail layers
+  debug/overlay.ts       collision wireframe, probe rays, contact history, tire and trail layers, roads
   debug/panel.ts, tools.ts  the F3 panel and the window.__drift.debug API
   debug/tuning.ts        the panel's Tuning tab: live car numbers and presets
   debug/tuningPlots.ts   the Tuning tab's tire, gearing and steering plots
@@ -164,6 +170,7 @@ src/
 tools/
   capture.mjs        headless (GPU) run → trace, screenshots, console, perf trace
   trace-report.mjs   summarises a trace: wall/edge episodes, stops, repro links
+  roads.mjs          road data at every preset spot, and the spot search on a synthetic street
 ```
 
 - **Rendering.** It uses three.js with `3d-tiles-renderer`. The Maps JavaScript `gmp-map-3d` element was ruled out because it has no per-frame camera control, no ground-height queries and no collision.
@@ -260,7 +267,7 @@ The game always records the last 60 s of physics steps:
 
 It also records events:
 - every overpass decision, with its samples;
-- spawns, resets and rebases;
+- spawns, resets, road teleports (with every spot tried and why it was turned down) and rebases;
 - console warnings and errors;
 - 2 Hz performance and tile samples, including the car's lat/lon.
 
@@ -290,7 +297,7 @@ pnpm capture "/?lat=44.97889&lon=-93.24472&bearing=14&top=1" --drive "W:16" --sh
 This runs headless Chrome with GPU flags (ANGLE/D3D11), starting a dev server if none is running.
 - It drives with the given keys and saves the trace, a screenshot and the page console. `--shots` adds periodic screenshots and `--perf` adds a Chrome performance trace.
 - It then prints the report.
-- `--setup "g.physics.reset(...)"` runs code in the page first; `g` is `window.__drift`.
+- `--setup "g.physics.reset(...)"` runs code in the page first; `g` is `window.__drift`. `g.teleportToRoad()` puts the car on the nearest road and returns the search; `--debug roads` draws the road centrelines and the spots it tried.
 - In the console, `__drift.debug` exposes `exportTrace()`, `save()`, `mark()`, `set({ wire: true })`, `setTimeScale()`, `stepOnce()`, `reproLink()`, `setAssist()`, `tuning` and `scope`.
 - Every real-tile capture is one billable root tileset load.
 
@@ -304,8 +311,18 @@ pnpm handling drift --timeline # matching scenarios, with slip°/yaw°/km/h ever
 
 This runs the car physics on a flat plane through scripted inputs (grip, braking, launch, power-over and handbrake drifts, held drifts in each gear, reversing) and prints the slip angle held, yaw rate, speed, path turned, time spent drifting and the driven wheels' mean wheelspin. Scenarios for one layout (lift-off and handbrake tricks for front drive, burnouts and 2nd-gear breakaway for rear drive) only run for such a car, or for any with `--all`. No browser or tiles are needed, so run it after changing any tuning in `src/car/cars.ts`.
 
+### Roads
+
+```sh
+pnpm roads             # every preset spot
+pnpm roads Shibuya     # matching spots
+```
+
+Road centrelines come from [OpenFreeMap](https://openfreemap.org)'s OpenStreetMap vector tiles (OpenMapTiles schema, zoom 14, no key), never from Google's tiles. The game loads the tile under the car and any neighbour within 300 m, keeps the 9 most recent, and drops footways, cycle paths, rail, ferries, construction and tunnels. `© OpenMapTiles © OpenStreetMap contributors` joins the attribution line once road data has loaded. The practice track has its own street grid. `pnpm roads` checks the spot search on a synthetic street, then loads the real tiles around every preset spot and reports the nearest drivable road (it should be a few metres away; over 25 m fails).
+
 ### Google Maps Platform terms
 
 - The Google Maps logo and the data attribution line (sorted by frequency, from the tiles' `copyright` fields) are shown whenever tiles are on screen. The minimap shows the map data copyright for its area, from the Map Tiles viewport API.
 - Tiles are only held in memory. There is no IndexedDB or service-worker caching and no prefetching outside the normal level-of-detail loading.
 - Collision uses the meshes currently loaded for display; nothing derived from them is stored.
+- Road positions come from OpenStreetMap, not from the tiles. The 3D mesh is only raycast at run time to check a spot is clear, the same way collision uses it.

@@ -3,6 +3,7 @@ import { PHYSICS } from '../config';
 import type { CarSpec } from '../car/cars';
 import type { Assist, CarInput, CarPhysics, OverpassDecision } from '../car/physics';
 import type { Collider } from '../world/collider';
+import type { RoadSearch } from '../world/roadSnap';
 import type { World } from '../world/types';
 import { Gauges } from './gauges';
 import { DebugOverlay, type OverlayLayers } from './overlay';
@@ -45,6 +46,7 @@ const DEFAULT_LAYERS: OverlayLayers = {
   tires: true,
   trail: false,
   gauges: false,
+  roads: false,
 };
 
 /**
@@ -147,8 +149,8 @@ export class DebugTools {
 
   /**
    * Applies a `?debug=` URL value: a comma list of layers to turn on
-   * (wire, height, slope, nophoto, probes, history, overpass, tires, trail, gauges), or empty for the
-   * saved defaults.
+   * (wire, height, slope, nophoto, probes, history, overpass, tires, trail, gauges,
+   * roads), or empty for the saved defaults.
    */
   applyParam(value: string): void {
     const on = new Set(value.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
@@ -163,6 +165,7 @@ export class DebugTools {
         tires: on.has('tires'),
         trail: on.has('trail'),
         gauges: on.has('gauges'),
+        roads: on.has('roads'),
       };
     }
     this.open = true;
@@ -290,6 +293,22 @@ export class DebugTools {
   onOverpass(d: OverpassDecision): void {
     this.recorder.event('overpass', { ...d });
     this.overlay.onOverpass(d);
+  }
+
+  /** A road teleport ran: traced with every spot it tried, and kept for the `roads` layer. */
+  onRoadSearch(from: Vector3, search: RoadSearch, ms: number): void {
+    const s = search.spot;
+    const r1 = (v: number) => Math.round(v * 10) / 10;
+    this.recorder.event('road-teleport', {
+      from: from.toArray().map(r1),
+      to: s ? s.pos.toArray().map(r1) : null,
+      heading: s ? round(s.heading) : null,
+      road: s ? { cls: s.road.cls, bridge: s.road.bridge, layer: s.road.layer, distance: r1(s.road.distance) } : null,
+      ms: r1(ms),
+      geo: s ? (this.ctx.world()?.geo(s.pos) ?? null) : null,
+      tried: search.tried.map((t) => ({ ...t, x: r1(t.x), y: t.y === null ? null : r1(t.y), z: r1(t.z), distance: r1(t.distance) })),
+    });
+    this.overlay.onRoadSearch(from, search, this.ctx.physics.groundY);
   }
 
   event(kind: string, data?: Record<string, unknown>): void {

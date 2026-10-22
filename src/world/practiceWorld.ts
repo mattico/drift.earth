@@ -15,6 +15,7 @@ import {
   type Vector3,
 } from 'three';
 import { overlapsColumn, worldBox } from './meshBounds';
+import { RoadNetwork, type RoadWay } from './roads';
 import type { Geo, RebaseResult, World, WorldStatus } from './types';
 
 const SIZE = 3000;
@@ -28,6 +29,7 @@ export class PracticeWorld implements World {
   readonly kind = 'practice' as const;
   readonly root: Object3D = new Group();
   private readonly colliders: Mesh[] = [];
+  readonly roads = practiceRoads();
 
   constructor() {
     const ground = new Mesh(new PlaneGeometry(SIZE, SIZE).rotateX(-Math.PI / 2), new MeshBasicMaterial({ map: asphaltTexture() }));
@@ -116,6 +118,26 @@ export class PracticeWorld implements World {
       m.dispose();
     });
   }
+}
+
+/**
+ * The streets between the blocks, as a road network, so the road teleport
+ * works offline: one centreline down the middle of each gap, the two through
+ * the plaza as main roads.
+ */
+function practiceRoads(): RoadNetwork {
+  const pitch = BLOCK + ROAD;
+  const lines: number[] = [];
+  for (let c = -CITY_EXTENT - pitch / 2; c <= CITY_EXTENT + pitch / 2; c += pitch) lines.push(c);
+  const from = lines[0];
+  const to = lines[lines.length - 1];
+  const ways: RoadWay[] = [];
+  for (const c of lines) {
+    const cls = Math.abs(c) < PLAZA / 2 ? 'primary' : c === from || c === to ? 'secondary' : 'minor';
+    const way = (xz: number[]): RoadWay => ({ xz: new Float64Array(xz), cls, bridge: false, layer: 0, paved: true, service: null });
+    ways.push(way([c, from, c, to]), way([from, c, to, c]));
+  }
+  return new RoadNetwork(ways);
 }
 
 /** Wedge rising toward −Z in local space: `width` across, `length` long, `height` tall. */

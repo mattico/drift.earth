@@ -12,12 +12,15 @@
     "capture": "node tools/capture.mjs",
     "trace:report": "node tools/trace-report.mjs",
     "handling": "node tools/handling.mjs",
+    "roads": "node tools/roads.mjs",
     "check:key": "node tools/check-no-key.mjs"
   },
   "license": "ISC",
   "packageManager": "pnpm@10.29.3",
   "dependencies": {
     "3d-tiles-renderer": "^0.5.3",
+    "@mapbox/vector-tile": "^3.0.0",
+    "pbf": "^5.1.2",
     "three": "^0.186.1",
     "three-mesh-bvh": "0.9.15"
   },

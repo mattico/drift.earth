@@ -26,6 +26,8 @@ import {
 } from '3d-tiles-renderer/three/plugins';
 import { TILES } from '../config';
 import { overlapsColumn, worldBox } from './meshBounds';
+import { OSM_ATTRIBUTION, OsmRoads } from './osmRoads';
+import type { RoadNetwork } from './roads';
 import type { Geo, RebaseResult, World, WorldStatus } from './types';
 
 // azimuth = π gives +X east, +Y up, −Z north (verified against the library).
@@ -34,6 +36,16 @@ const DRACO_PATH = 'https://www.gstatic.com/draco/versioned/decoders/1.5.7/';
 /** Consecutive tile failures (with no successful load) before suspecting a stuck session. */
 const STUCK_FAILURES = 8;
 const MAX_SESSION_RECOVERIES = 3;
+/** Frames between road-loader updates: the focus moves a few metres at most. */
+const ROAD_UPDATE_FRAMES = 15;
+/**
+ * Re-project the roads when the focus height moves this far (m) from the one
+ * they were projected at. A wrong height shifts a point d metres away sideways
+ * by height error × d / R: negligible near the car, except after the fly-in
+ * from kilometres up.
+ */
+const ROAD_HEIGHT_TOLERANCE = 50;
+const _geo = new Vector3();
 
 export interface TilesWorldOptions {
   apiKey: string;
@@ -63,6 +75,10 @@ export class TilesWorld implements World {
   private minLeafError = Infinity;
   private readonly renderer: WebGLRenderer;
   private camera: PerspectiveCamera;
+  private readonly osm: OsmRoads;
+  /** Ellipsoidal height (m) the roads are projected at. */
+  private roadHeight = 0;
+  private roadAge = Infinity;
 
   constructor(opts: TilesWorldOptions) {
     this.camera = opts.camera;
@@ -103,6 +119,14 @@ export class TilesWorld implements World {
 
     this.tiles = tiles;
     this.root = tiles.group;
+    this.osm = new OsmRoads((lat, lon) => {
+      const p = this.fromGeo({ lat, lon, height: this.roadHeight }, _geo);
+      return [p.x, p.z];
+    });
+  }
+
+  get roads(): RoadNetwork | null {
+    return this.osm.network;
   }
 
   private onLoadModel(scene: Object3D, tile: Tile): void {
@@ -197,6 +221,18 @@ export class TilesWorld implements World {
     camera.updateMatrixWorld();
     this.tiles.update();
 
+    // Until the root tileset loads, ReorientationPlugin hasn't placed the group
+    // and geo() would read world space as ECEF (lat 0, lon 90).
+    if (this.tiles.root && ++this.roadAge >= ROAD_UPDATE_FRAMES) {
+      this.roadAge = 0;
+      const geo = this.geo(focus);
+      if (Math.abs(geo.height - this.roadHeight) > ROAD_HEIGHT_TOLERANCE) {
+        this.roadHeight = geo.height;
+        this.osm.reproject();
+      }
+      this.osm.update(geo.lat, geo.lon);
+    }
+
     this.attributionAge++;
     if (this.attributionAge > 30) {
       this.attributionAge = 0;
@@ -218,11 +254,13 @@ export class TilesWorld implements World {
     const dq = new Quaternion().multiplyQuaternions(g.quaternion, oldQuat.invert());
     const yaw = new Euler().setFromQuaternion(dq, 'YXZ').y;
     this.epoch++;
+    this.osm.reproject();
     return { matrix, yaw };
   }
 
   attribution(): string {
-    return this.attributionText;
+    if (!this.osm.inUse) return this.attributionText;
+    return this.attributionText ? `${this.attributionText} · ${OSM_ATTRIBUTION}` : OSM_ATTRIBUTION;
   }
 
   status(): WorldStatus {
@@ -237,10 +275,12 @@ export class TilesWorld implements World {
   debugInfo(): string {
     const s = (this.tiles as unknown as { stats: Record<string, number> }).stats;
     const leaf = Number.isFinite(this.minLeafError) ? this.minLeafError.toFixed(2) : '–';
+    const r = this.osm.stats();
     return (
       `tiles active ${this.tiles.activeTiles.size} visible ${this.tiles.visibleTiles.size}` +
       ` dl ${s.downloading} parse ${s.parsing} failed ${s.failed} errors ${this.loadErrors}\n` +
-      `min leaf geometricError ${leaf} m`
+      `min leaf geometricError ${leaf} m\n` +
+      `OSM tiles ${r.roadTiles} loading ${r.roadLoading} errors ${r.roadErrors}  segments ${r.roadSegments}  decode ${r.roadDecodeMs} ms`
     );
   }
 
@@ -255,6 +295,7 @@ export class TilesWorld implements World {
       loadErrors: this.loadErrors,
       recoveries: this.recoveries,
       epoch: this.epoch,
+      ...this.osm.stats(),
     };
   }
 
@@ -266,8 +307,17 @@ export class TilesWorld implements World {
     return { lat: c.lat * MathUtils.RAD2DEG, lon: c.lon * MathUtils.RAD2DEG, height: c.height };
   }
 
+  /** World-space position of a geodetic one: the inverse of geo(). Uses the group's current matrixWorld. */
+  fromGeo(geo: Geo, out = new Vector3()): Vector3 {
+    const g = this.tiles.group;
+    return this.tiles.ellipsoid
+      .getCartographicToPosition(geo.lat * MathUtils.DEG2RAD, geo.lon * MathUtils.DEG2RAD, geo.height, out)
+      .applyMatrix4(g.matrixWorld);
+  }
+
   dispose(): void {
     clearTimeout(this.recoveryTimer);
+    this.osm.dispose();
     this.tiles.dispose();
     this.draco.dispose();
   }

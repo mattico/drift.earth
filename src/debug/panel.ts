@@ -1,4 +1,4 @@
-import { HEIGHT_BANDS, RAY_COLORS, type FillMode, type OverlayLayers } from './overlay';
+import { HEIGHT_BANDS, RAY_COLORS, ROAD_COLORS, ROAD_VERDICT_COLORS, type FillMode, type OverlayLayers } from './overlay';
 
 export interface PanelHandlers {
   onLayers(l: Partial<OverlayLayers>): void;
@@ -101,6 +101,7 @@ export class DebugPanel {
       'The car’s last 18 s of driving, coloured by the first that applied: airborne, stability control, ABS, traction control, sliding (both, rear, front), drifting, grip',
     );
     toggle('gauges', 'Gauges', 'Live gauges over the game view: friction circles, g-g, inputs, aids, drivetrain (stay up with the panel closed)');
+    toggle('roads', 'Roads', 'OpenStreetMap road centrelines and the last road teleport’s tries');
 
     const time = row('time');
     for (const [s, label] of SCALES) {
@@ -220,6 +221,8 @@ function legend(): string {
     swatch('#b080ff', 'drifting, tires gripping'),
     swatch('#40ff60', 'grip'),
   ].join('');
+  const roads = (Object.entries(ROAD_COLORS) as Array<[string, number]>).map(([k, v]) => swatch(hex(v), k)).join('');
+  const tries = (Object.entries(ROAD_VERDICT_COLORS) as Array<[string, number]>).map(([k, v]) => swatch(hex(v), k)).join('');
   return [
     `<div><b>Height above the car's ground</b>${heights}</div>`,
     `<div><b>Slope fill</b>${slope}</div>`,
@@ -231,5 +234,7 @@ function legend(): string {
     `<div><b>Load bars (white tick = static)</b>${load}</div>`,
     `<div><b>Drift angle (heading to velocity, 10° ticks)</b>${drift}</div>`,
     `<div><b>Trail (first that applied)</b>${trail}</div>`,
+    `<div><b>Roads (OSM)</b>${roads}</div>`,
+    `<div><b>Road teleport tries</b>${tries}</div>`,
   ].join('');
 }

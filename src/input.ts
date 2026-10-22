@@ -3,7 +3,12 @@ import type { CarInput } from './car/physics';
 export type InputDevice = 'keyboard' | 'gamepad' | 'touch';
 
 export interface Actions {
+  /** Reset tapped (R, Y, ⟲): fires on release, so a hold can mean something else… */
   reset: boolean;
+  /** …held for RESET_HOLD: fires once, while still held. */
+  roadReset: boolean;
+  /** How long (s) reset has been held so far, 0 once it fires or is let go. */
+  resetHold: number;
   pause: boolean;
   /** Step through the camera's pitch presets: +1 next, −1 previous, 0 none. */
   cameraCycle: number;
@@ -63,6 +68,8 @@ const NAV_DELAY = 0.4;
 const NAV_REPEAT = 0.12;
 /** Held zoom keys/buttons: log-scale change per second (the full 0.6–2.5× range in about 1.6 s). */
 const ZOOM_RATE = 0.9;
+/** Holding reset this long (s) asks for the nearest road instead of a breadcrumb. */
+export const RESET_HOLD = 0.5;
 
 /** Rescales `v` so the deadzone reads 0 and full travel still reads 1. */
 const deadzone = (v: number, dz: number) => (Math.abs(v) < dz ? 0 : (Math.sign(v) * (Math.abs(v) - dz)) / (1 - dz));
@@ -74,6 +81,8 @@ export class InputManager {
   private wheel = 0;
   private readonly mouseDrag = { id: null as number | null, x: 0, y: 0 };
   private readonly touch = { steer: 0, throttle: 0, brake: 0, handbrake: false, pause: false, reset: false };
+  /** Reset held on any device: for how long (s), and whether this hold has already fired (or was held through a flush). */
+  private readonly resetHold = { t: 0, spent: false };
   /** Last frame's buttons per pad index, for edge detection. */
   private readonly padPrev = new Map<number, boolean[]>();
   /** Buttons held through a flush (e.g. the A that pressed Resume), ignored until released. */
@@ -193,8 +202,8 @@ export class InputManager {
     hold('.touch-gas', (v) => (this.touch.throttle = v ? 1 : 0));
     hold('.touch-brake', (v) => (this.touch.brake = v ? 1 : 0));
     hold('.touch-drift', (v) => (this.touch.handbrake = v));
+    hold('.touch-reset', (v) => (this.touch.reset = v));
     root.querySelector('.touch-menu')!.addEventListener('click', () => (this.touch.pause = true));
-    root.querySelector('.touch-reset')!.addEventListener('click', () => (this.touch.reset = true));
   }
 
   /**
@@ -204,6 +213,8 @@ export class InputManager {
    */
   flush(): void {
     this.pressed.clear();
+    // A reset key held through the menu does nothing until it's let go.
+    this.resetHold.spent = this.resetHold.t > 0 || this.keys.has('KeyR') || this.touch.reset;
     for (const pad of navigator.getGamepads?.() ?? []) {
       if (!pad) continue;
       const held = new Set<number>();
@@ -229,8 +240,11 @@ export class InputManager {
     let brake = k('KeyS', 'ArrowDown') ? 1 : 0;
     let steer = (k('KeyA', 'ArrowLeft') ? 1 : 0) - (k('KeyD', 'ArrowRight') ? 1 : 0);
     let handbrake = k('Space');
+    let resetDown = k('KeyR') || this.touch.reset;
     const actions: Actions = {
-      reset: p('KeyR'),
+      reset: false,
+      roadReset: false,
+      resetHold: 0,
       pause: p('Escape', 'KeyP'),
       cameraCycle: p('KeyC') ? 1 : 0,
       cameraWrap: true,
@@ -260,8 +274,7 @@ export class InputManager {
 
     // Touch
     if (this.touch.pause) actions.pause = true;
-    if (this.touch.reset) actions.reset = true;
-    this.touch.pause = this.touch.reset = false;
+    this.touch.pause = false;
     if (this.shiftQueue.up) actions.shiftUp = true;
     if (this.shiftQueue.down) actions.shiftDown = true;
     if (this.shiftQueue.mode) actions.gearMode = true;
@@ -294,7 +307,7 @@ export class InputManager {
       brake = Math.max(brake, padBrake);
       padBrakeMax = Math.max(padBrakeMax, padBrake);
       handbrake ||= !!held[PAD.a];
-      if (edge(PAD.y)) actions.reset = true;
+      resetDown ||= !!held[PAD.y];
       if (edge(PAD.menu)) actions.pause = true;
       if (edge(PAD.rb)) actions.shiftUp = true;
       if (edge(PAD.lb)) actions.shiftDown = true;
@@ -334,12 +347,32 @@ export class InputManager {
       if (active) this.device = 'gamepad';
     }
     actions.nav = this.navRepeat(navX, navY, dt);
+    this.resetPress(resetDown, dt, actions);
 
     this.pressed.clear();
     if (!this.enabled) return { car: { throttle: 0, brake: 0, steer: 0, handbrake: false }, actions };
     // A key or touch button is on/off; a trigger pressed as far is the driver's own easing.
     const brakeDigital = brake > padBrakeMax;
     return { car: { throttle, brake, steer, handbrake, brakeDigital }, actions };
+  }
+
+  /** Reset: a tap fires `reset` when let go; held for RESET_HOLD, `roadReset` fires once and the release is ignored. */
+  private resetPress(down: boolean, dt: number, actions: Actions): void {
+    const h = this.resetHold;
+    if (!down) {
+      if (h.t > 0 && !h.spent) actions.reset = true;
+      h.t = 0;
+      h.spent = false;
+      return;
+    }
+    if (h.spent) return;
+    h.t += dt;
+    if (h.t >= RESET_HOLD) {
+      actions.roadReset = true;
+      h.spent = true;
+    } else {
+      actions.resetHold = h.t;
+    }
   }
 
   /** A held direction moves once, then repeats after NAV_DELAY every NAV_REPEAT. */

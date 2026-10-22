@@ -11,7 +11,7 @@ const fmt = new Intl.NumberFormat('en-US');
 
 const PAD_HINTS =
   '<b>RT/LT</b> gas · brake/reverse &nbsp; <b>L stick</b> steer &nbsp; <b>A</b> handbrake &nbsp; <b>LB/RB</b> shift (manual) &nbsp; <b>View</b> auto<br />' +
-  '<b>R stick</b> look around (<b>R3</b> auto re-centre on/off) &nbsp; <b>D-pad ◀▶</b> camera angle &nbsp; <b>▲▼</b> zoom &nbsp; <b>Y</b> reset &nbsp; <b>Menu</b> pause';
+  '<b>R stick</b> look around (<b>R3</b> auto re-centre on/off) &nbsp; <b>D-pad ◀▶</b> camera angle &nbsp; <b>▲▼</b> zoom &nbsp; <b>Y</b> reset (hold: nearest road) &nbsp; <b>Menu</b> pause';
 
 /** m/s → mph, for everything the game displays. */
 export const MPH = 2.236936;
@@ -240,6 +240,7 @@ export interface MenuHandlers {
   onPractice(): void;
   onResume(): void;
   onRespawn(): void;
+  onRoad(): void;
   onKey(key: string): void;
   onDebug(): void;
   onCar(id: CarId): void;
@@ -259,6 +260,7 @@ export class Menu {
   private readonly keyInput = $<HTMLInputElement>('api-key');
   private readonly resumeRow = $('resume-row');
   private readonly audioOut = $('audio-out');
+  private readonly roadButton = $<HTMLButtonElement>('back-to-road');
   private readonly carButtons = new Map<CarId, HTMLButtonElement>();
   private device: InputDevice | null = null;
   private places: PlaceSearch | null = null;
@@ -278,6 +280,7 @@ export class Menu {
       onPractice: bump(handlers.onPractice),
       onResume: bump(handlers.onResume),
       onRespawn: bump(handlers.onRespawn),
+      onRoad: bump(handlers.onRoad),
       onKey: handlers.onKey,
       onDebug: handlers.onDebug,
       onCar: handlers.onCar,
@@ -291,6 +294,7 @@ export class Menu {
     $('practice').addEventListener('click', () => h.onPractice());
     $('resume').addEventListener('click', () => h.onResume());
     $('respawn').addEventListener('click', () => h.onRespawn());
+    this.roadButton.addEventListener('click', () => h.onRoad());
     $('debug-tools').addEventListener('click', () => h.onDebug());
     this.audioOut.addEventListener('click', () => h.onHeadphones(this.audioOut.getAttribute('aria-pressed') !== 'true'));
     $('save-key').addEventListener('click', () => {
@@ -313,6 +317,14 @@ export class Menu {
     this.search.placeholder = key
       ? 'Search a place, or paste “lat, lng” / a Google Maps link'
       : 'Paste “lat, lng” or a Google Maps link';
+  }
+
+  /** "Back to road" only works once road data has loaded. */
+  setRoadAvailable(on: boolean): void {
+    // Called every frame while paused: leave the DOM alone unless it changes.
+    if (this.roadButton.disabled === !on && this.roadButton.title) return;
+    this.roadButton.disabled = !on;
+    this.roadButton.title = on ? 'Put the car on the nearest road (OpenStreetMap)' : 'No road data loaded here yet';
   }
 
   /** Marks the car the game is using in the picker. */
@@ -396,7 +408,9 @@ export class Menu {
   }
 
   private focusables(): HTMLElement[] {
-    return [...this.root.querySelectorAll<HTMLElement>('button, input, .suggestions li')].filter((el) => el.getClientRects().length > 0);
+    return [...this.root.querySelectorAll<HTMLElement>('button, input, .suggestions li')].filter(
+      (el) => el.getClientRects().length > 0 && !(el as HTMLButtonElement).disabled,
+    );
   }
 
   private focusDefault(): void {

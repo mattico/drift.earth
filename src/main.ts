@@ -66,6 +66,7 @@ const game = new Game(document.getElementById('view') as HTMLCanvasElement, hud,
     menu.show(false);
   },
   onPause() {
+    menu.setRoadAvailable(game.hasRoads);
     menu.show(true);
   },
   onResume() {
@@ -77,6 +78,8 @@ const game = new Game(document.getElementById('view') as HTMLCanvasElement, hud,
   },
   onMenuInput(actions, device) {
     menu.setDevice(device);
+    // Road tiles keep loading while paused.
+    if (game.canResume) menu.setRoadAvailable(game.hasRoads);
     if (!actions || !menu.visible) return;
     if (actions.nav) menu.navigate(actions.nav);
     if (actions.select) menu.select();
@@ -120,6 +123,10 @@ const menu = new Menu({
   onRespawn() {
     menu.hide();
     game.respawnHere();
+  },
+  onRoad() {
+    menu.hide();
+    game.backToRoad();
   },
   onKey(key) {
     apiKey = key;

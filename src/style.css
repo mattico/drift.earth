@@ -950,9 +950,17 @@ input {
 .btn.ghost {
   background: transparent;
 }
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.btn:disabled:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
 
 .resume-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 18px;
 }
