@@ -87,6 +87,18 @@ interface Tunnel {
   z: number;
 }
 
+interface GhostTunnelPoint {
+  x: number;
+  z: number;
+  h: number;
+}
+
+interface GhostTunnelWallHit {
+  point: Vector3;
+  normal: Vector3;
+  distance: number;
+}
+
 /** Footprint of a car-sized blob judged passable (baked or ghosted vehicle). */
 interface Blob {
   x: number;
@@ -326,6 +338,7 @@ export class CarPhysics {
     this.blobCache.clear();
     this.blobs.length = 0;
     this.tunnel = null;
+    this.ghostTunnel = null;
     this.roadTrail.length = 0;
     this.pitch = this.roll = 0;
     this.groundNormal.set(0, 1, 0);
@@ -360,6 +373,14 @@ export class CarPhysics {
       t.z = _o.z;
       t.h += dy;
       if (t.exit) t.exit.h += dy;
+    }
+    if (this.ghostTunnel) {
+      for (const point of this.ghostTunnel) {
+        _o.set(point.x, 0, point.z).applyMatrix4(m);
+        point.x = _o.x;
+        point.z = _o.z;
+        point.h += dy;
+      }
     }
   }
 
@@ -797,6 +818,7 @@ export class CarPhysics {
   private readonly cornerProbeY = [0, 0, 0, 0];
   /** Set while inside a tunnel the portal test let the car into. */
   tunnel: Tunnel | null = null;
+  private ghostTunnel: GhostTunnelPoint[] | null = null;
   /** Road heights behind the car on real ground (a point a metre), for a tunnel's starting grade. */
   private readonly roadTrail: Array<{ x: number; y: number; z: number }> = [];
   private readonly overpassCache = new Map<string, boolean>();
@@ -919,7 +941,6 @@ export class CarPhysics {
     const y = Math.max(this.groundY, this.pos.y) + P.wallProbeHeight;
     _d.set(dx, 0, dz);
 
-    let best: RayHit | null = null;
     let bestPen = 0;
     for (let r = 0; r < WALL_RAYS.length; r++) {
       const q = WALL_RAYS[r] * pext;
@@ -927,25 +948,29 @@ export class CarPhysics {
       if (reach === null) continue;
       _o.set(this.pos.x + px * q, y, this.pos.z + pz * q);
       const length = reach + sp * dt + 0.3;
-      const hit = collider.cast(_o, _d, length);
+      const meshHit = collider.cast(_o, _d, length);
+      const ghostHit = this.ghostTunnelWall(_o, dx, dz, length);
+      const isGhost = !!ghostHit && (!meshHit || ghostHit.distance < meshHit.distance);
+      const hit = isGhost ? ghostHit : meshHit;
       let verdict: WallRayDebug['verdict'] = 'clear';
       if (hit && Math.abs(hit.normal.y) > P.wallMaxNormalY) verdict = 'steep-floor';
       else if (hit && hit.distance >= reach + 0.05) verdict = 'beyond';
       else if (hit) {
         const pen = reach + 0.03 - hit.distance;
         if (pen <= bestPen) verdict = 'wall-minor';
-        else if (this.inBlob(hit.point.x, hit.point.z) || this.isBlob(collider, hit.point.x, hit.point.z, dx, dz, hit.point.y))
+        else if (!isGhost && (this.inBlob(hit.point.x, hit.point.z) || this.isBlob(collider, hit.point.x, hit.point.z, dx, dz, hit.point.y)))
           verdict = 'blob';
-        else if (this.isOverpass(collider, hit, dx, dz)) verdict = 'overpass';
+        else if (!isGhost && meshHit && this.isOverpass(collider, meshHit, dx, dz)) verdict = 'overpass';
         else {
           verdict = 'wall';
-          best = hit;
           bestPen = pen;
+          this.wall.point.copy(hit.point);
+          this.wall.normal.copy(hit.normal);
+          this.wall.geometricError = isGhost
+            ? -1
+            : (meshHit?.object.userData.tile as { geometricError?: number } | undefined)?.geometricError ?? -1;
           const w = this.wall;
           w.ray = r;
-          w.point.copy(hit.point);
-          w.normal.copy(hit.normal);
-          w.geometricError = (hit.object.userData.tile as { geometricError?: number } | undefined)?.geometricError ?? -1;
         }
       }
       if (this.debugRays) {
@@ -959,10 +984,10 @@ export class CarPhysics {
         });
       }
     }
-    if (!best) return;
+    if (bestPen === 0) return;
     this.wall.pen = bestPen;
 
-    const n = best.normal;
+    const n = this.wall.normal;
     n.y = 0;
     if (n.lengthSq() < 1e-6) n.set(-dx, 0, -dz);
     n.normalize();
@@ -1376,6 +1401,11 @@ export class CarPhysics {
 
   private enterTunnel(cover: number, g: number): void {
     const grade = this.approachGrade();
+    const speed = Math.hypot(this.vel.x, this.vel.z);
+    const dx = speed > 0.1 ? this.vel.x / speed : -Math.sin(this.heading);
+    const dz = speed > 0.1 ? this.vel.z / speed : -Math.cos(this.heading);
+    const entryX = this.pos.x;
+    const entryZ = this.pos.z;
     this.tunnel = {
       h: g,
       grade: MathUtils.clamp(grade, -P.tunnelMaxGrade, P.tunnelMaxGrade),
@@ -1391,6 +1421,79 @@ export class CarPhysics {
       x: this.pos.x,
       z: this.pos.z,
     };
+    this.ghostTunnel = [
+      { x: entryX - dx * P.ghostTunnelEntryPadding, z: entryZ - dz * P.ghostTunnelEntryPadding, h: g },
+      { x: entryX, z: entryZ, h: g },
+    ];
+  }
+
+  private ghostTunnelWall(origin: Vector3, dx: number, dz: number, far: number): GhostTunnelWallHit | null {
+    const path = this.ghostTunnel;
+    if (!path || path.length < 2) return null;
+    let nearest: GhostTunnelWallHit | null = null;
+    const halfWidth = P.ghostTunnelWidth / 2;
+    for (let i = 0; i < path.length - 1; i++) {
+      const a = path[i];
+      const b = path[i + 1];
+      const vx = b.x - a.x;
+      const vz = b.z - a.z;
+      const segmentLength = Math.hypot(vx, vz);
+      if (segmentLength < 1e-4) continue;
+      const tx = vx / segmentLength;
+      const tz = vz / segmentLength;
+      const leftX = -tz;
+      const leftZ = tx;
+      const startPadding = i === 0 ? P.ghostTunnelEntryPadding : 0;
+      const endPadding = i === path.length - 2 ? P.ghostTunnelExitPadding : 0;
+      for (const side of [-1, 1]) {
+        const ax = a.x + side * leftX * halfWidth - tx * startPadding;
+        const az = a.z + side * leftZ * halfWidth - tz * startPadding;
+        const bx = b.x + side * leftX * halfWidth + tx * endPadding;
+        const bz = b.z + side * leftZ * halfWidth + tz * endPadding;
+        const sx = bx - ax;
+        const sz = bz - az;
+        const denom = dx * sz - dz * sx;
+        if (Math.abs(denom) < 1e-6) continue;
+        const ox = ax - origin.x;
+        const oz = az - origin.z;
+        const distance = (ox * sz - oz * sx) / denom;
+        const along = (ox * dz - oz * dx) / denom;
+        if (distance < 0 || distance > far || along < 0 || along > 1) continue;
+        const road = a.h + (b.h - a.h) * along;
+        if (origin.y < road - P.ghostTunnelBarrierTolerance || origin.y > road + P.ghostTunnelWallHeight + P.ghostTunnelBarrierTolerance)
+          continue;
+        if (nearest && distance >= nearest.distance) continue;
+        nearest = {
+          point: new Vector3(origin.x + dx * distance, origin.y, origin.z + dz * distance),
+          normal: new Vector3(-side * leftX, 0, -side * leftZ),
+          distance,
+        };
+      }
+    }
+    return nearest;
+  }
+
+  private recordGhostTunnel(t: Tunnel): void {
+    const path = this.ghostTunnel;
+    if (!path) return;
+    const last = path[path.length - 1];
+    if (Math.hypot(this.pos.x - last.x, this.pos.z - last.z) < 1) {
+      last.x = this.pos.x;
+      last.z = this.pos.z;
+      last.h = t.h;
+      return;
+    }
+    path.push({ x: this.pos.x, z: this.pos.z, h: t.h });
+    let length = 0;
+    let keepFrom = path.length - 1;
+    for (let i = path.length - 1; i > 0; i--) {
+      length += Math.hypot(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z);
+      if (length > 80) {
+        keepFrom = i;
+        break;
+      }
+    }
+    if (keepFrom > 0) path.splice(0, keepFrom);
   }
 
   /**
@@ -1520,7 +1623,12 @@ export class CarPhysics {
     // (Real ground only counts once the car has been on the virtual road: a
     // tunnel can start with road under the cover's edge.)
     const onVirtual = t.scannedAt > -Infinity;
-    if ((t.open > 10 && t.d > 10) || (onVirtual && t.real > 60 && t.d > 15) || t.d > P.tunnelMaxLength) this.tunnel = null;
+    const ended = (t.open > 10 && t.d > 10) || (onVirtual && t.real > 60 && t.d > 15) || t.d > P.tunnelMaxLength;
+    if (!ended) this.recordGhostTunnel(t);
+    if (ended) {
+      this.tunnel = null;
+      this.ghostTunnel = null;
+    }
   }
 
   /**
