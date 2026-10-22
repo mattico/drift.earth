@@ -34,6 +34,8 @@ interface Crumb {
 const DOWN = new Vector3(0, -1, 0);
 const LOCATE_START_DISTANCE = 2600;
 const LOCATE_TIMEOUT = 30;
+/** Camera pitch while high in the fly-in. */
+const LOCATE_PITCH = 84 * (Math.PI / 180);
 /** Camera target height until real ground is found: above all but the highest peaks. */
 const LOCATE_START_HEIGHT = 6000;
 /** Spawn this long after arriving even if tiles are still streaming (dense cities never go quiet). */
@@ -88,6 +90,8 @@ export class Game {
   private locate = {
     t: 0,
     groundY: null as number | null,
+    /** Finest surface hit under the origin so far, however coarse its tile. */
+    surfaceY: null as number | null,
     camY: LOCATE_START_HEIGHT,
     settle: 0,
     arrivedT: 0,
@@ -174,9 +178,9 @@ export class Game {
     this.setWorld(world);
     this.debug.event('start', { lat, lon, bearing, name, top, ...opts });
     this.spawnHeading = -bearing * MathUtils.DEG2RAD;
-    this.locate = { t: 0, groundY: null, camY: LOCATE_START_HEIGHT, settle: 0, arrivedT: 0, name, top, opts };
+    this.locate = { t: 0, groundY: null, surfaceY: null, camY: LOCATE_START_HEIGHT, settle: 0, arrivedT: 0, name, top, opts };
     this.phase = 'locating';
-    this.chase.snap(new Vector3(0, LOCATE_START_HEIGHT, 0), this.spawnHeading, LOCATE_START_DISTANCE);
+    this.chase.snap(new Vector3(0, LOCATE_START_HEIGHT, 0), this.spawnHeading, LOCATE_START_DISTANCE, LOCATE_PITCH);
     this.hud.setGoogleBranding(true);
     this.hud.showLoading(`Flying to ${name}…`, 0);
     this.hud.show(false);
@@ -209,7 +213,7 @@ export class Game {
     this.spawnPos.copy(pos);
     this.spawnHeading = heading;
     this.physics.reset(pos, heading);
-    if (kmh) this.physics.vel.copy(this.physics.forward).multiplyScalar(kmh / 3.6);
+    if (kmh) this.physics.launch(kmh / 3.6);
     this.debug.event('spawn', { pos: pos.toArray(), heading, kmh, geo: this.world?.geo(pos) ?? null });
     this.chase.snap(pos, heading, CAMERA.distance);
     this.car.root.visible = true;
@@ -298,7 +302,16 @@ export class Game {
     const physMs = performance.now() - now;
 
     if (world && this.collider) {
-      const focus = this.phase === 'driving' || this.phase === 'paused' ? this.physics.pos : this.chase.target;
+      // Flying in, the detail region sits on the best surface found under the
+      // spawn so far (not the camera, kilometres up): each refinement brings
+      // the hit closer to the real ground, and the region follows it down.
+      const L = this.locate;
+      const focus =
+        this.phase === 'driving' || this.phase === 'paused'
+          ? this.physics.pos
+          : this.phase === 'locating'
+            ? new Vector3(0, L.groundY ?? L.surfaceY ?? this.chase.target.y, 0)
+            : this.chase.target;
       world.update(this.chase.camera, focus, this.physics.vel);
       if (this.phase === 'driving') this.collider.warm(focus.x, focus.z, 60);
       this.hud.setAttribution(world.attribution());
@@ -337,12 +350,19 @@ export class Game {
     // Coarse hits are ignored entirely: they can be kilometres above or below the
     // surface, and a camera parked underground never sees tiles refine.
     if (best && best.error < FINE_TILE_ERROR) L.groundY = best.y;
+    if (best) L.surfaceY = best.y;
 
     // Hold the camera high until the ground is known, then glide down to it.
     if (L.groundY !== null) L.camY += (L.groundY - L.camY) * (1 - Math.exp(-dt * 2.5));
     let distance = this.chase.distance;
     if (L.groundY !== null) distance = Math.max(CAMERA.distance, distance * Math.exp(-dt * 1.1));
-    this.chase.snap(new Vector3(0, L.camY, 0), this.spawnHeading, distance);
+    // Look nearly straight down while high up: at a shallow preset the ground
+    // under the spawn would be off-screen, and with everything in view already
+    // detailed enough, the tiles there would never refine. Ease to the preset
+    // over the last few hundred metres.
+    const preset = CAMERA.pitchPresets[this.chase.pitchPreset];
+    const high = L.groundY === null ? 1 : MathUtils.smoothstep(L.camY - L.groundY, 50, 600);
+    this.chase.snap(new Vector3(0, L.camY, 0), this.spawnHeading, distance, MathUtils.lerp(preset, Math.max(preset, LOCATE_PITCH), high));
 
     const st = world.status();
     const arrived = L.groundY !== null && distance <= CAMERA.distance + 0.5 && Math.abs(L.camY - L.groundY) < 1;
@@ -452,7 +472,7 @@ export class Game {
     const y = MathUtils.lerp(P.prevPos.y, P.pos.y, alpha);
     const z = MathUtils.lerp(P.prevPos.z, P.pos.z, alpha);
     const heading = P.prevHeading + wrapAngle(P.heading - P.prevHeading) * alpha;
-    this.steerShown += (P.steer * 1.4 - this.steerShown) * (1 - Math.exp(-dt / 0.05));
+    this.steerShown += (P.steer - this.steerShown) * (1 - Math.exp(-dt / 0.05));
     this.car.update(
       {
         x,
@@ -473,7 +493,7 @@ export class Game {
     const renderPos = new Vector3(x, y, z);
     this.chase.follow(dt, renderPos, heading, P.vel, P.drifting);
     const box = P.drivetrain;
-    this.audio.update(box.rpm / DRIVETRAIN.redline, inp.throttle, P.airborne ? 0 : Math.min(1, Math.abs(P.vLateral) / 8), true, box.limiting);
+    this.audio.update(box.rpm / DRIVETRAIN.redline, inp.throttle, P.airborne ? 0 : Math.min(1, P.tyre.slideR / 8), true, box.limiting);
     this.hud.setDrive({ rpm: box.rpm, gear: box.gear, mode: box.mode, limiting: box.limiting, refused: box.refused > 0 });
 
     // Frozen or slowed physics must not trip the airborne/stuck timers.
@@ -486,10 +506,11 @@ export class Game {
     const P = this.physics;
     const sinH = Math.sin(heading);
     const cosH = Math.cos(heading);
-    const slideAmount = P.airborne ? 0 : Math.min(1, Math.max(0, Math.abs(P.vLateral) - 1.5) / 6) + (handbrake && P.speed > 3 ? 0.4 : 0);
+    // Smoke follows how fast the rear tyres slide over the road: drifts, burnouts and lock-ups.
+    const slideAmount = P.airborne ? 0 : Math.max(0, P.tyre.slideR - 1.5) / 6 + (handbrake && P.speed > 3 ? 0.2 : 0);
     const wheels: WheelSample[] = CarModel.rearWheels.map(([cx, cz]) => ({
       point: new Vector3(x + cx * cosH + cz * sinH, P.groundY + 0.03, z - cx * sinH + cz * cosH),
-      sliding: P.speed > 3 ? Math.min(1, slideAmount) : 0,
+      sliding: Math.min(1, slideAmount),
     }));
     const speed = P.speed;
     const dir = speed > 0.1 ? new Vector3(P.vel.x / speed, 0, P.vel.z / speed) : P.forward;
@@ -515,7 +536,8 @@ export class Game {
     this.crumbTimer += dt;
     const last = this.crumbs[this.crumbs.length - 1];
     const moved = !last || Math.hypot(P.pos.x - last.pos.x, P.pos.z - last.pos.z) > 5;
-    if (this.crumbTimer > 1 && moved && !this.fallGuard && !P.airborne && !P.waiting && P.groundNormal.y > 0.9) {
+    // Not inside a tunnel either: a reset there would lose the virtual road.
+    if (this.crumbTimer > 1 && moved && !this.fallGuard && !P.airborne && !P.waiting && !P.tunnel && P.groundNormal.y > 0.9) {
       this.crumbTimer = 0;
       this.crumbs.push({ pos: P.pos.clone(), heading: P.heading, t: this.time });
       if (this.crumbs.length > 30) this.crumbs.shift();
@@ -588,11 +610,14 @@ export class Game {
       `fps ${this.fps.toFixed(0)}  phase ${this.phase}`,
       `pos ${P.pos.x.toFixed(1)} ${P.pos.y.toFixed(1)} ${P.pos.z.toFixed(1)}  hdg ${(-P.heading * MathUtils.RAD2DEG).toFixed(0)}°`,
       `v ${(P.speed * 3.6).toFixed(0)} km/h  vF ${P.vForward.toFixed(1)} vL ${P.vLateral.toFixed(1)}  slip ${(P.slip * MathUtils.RAD2DEG).toFixed(0)}°`,
-      `drift ${P.drifting} air ${P.airborne} wait ${P.waiting}  n.y ${P.groundNormal.y.toFixed(3)}`,
+      `drift ${P.drifting} air ${P.airborne} wait ${P.waiting}  n.y ${P.groundNormal.y.toFixed(3)}${
+        P.tunnel ? `  tunnel ${P.tunnel.d.toFixed(0)} m grade ${(P.tunnel.grade * 100).toFixed(1)}%${P.tunnel.exit ? ' exit seen' : ''}` : ''
+      }`,
+      `tyres  front ${(P.tyre.slipF * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tyre.loadF / 1000).toFixed(1)} kN  rear ${(P.tyre.slipR * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tyre.loadR / 1000).toFixed(1)} kN  wheel ${(P.wheelSpeed * 3.6).toFixed(0)} km/h  steer ${(P.steer * MathUtils.RAD2DEG).toFixed(0)}°`,
       (() => {
         const box = P.drivetrain;
         const out = box.output();
-        return `${box.mode} gear ${box.gear < 0 ? 'R' : box.gear}  ${Math.round(box.rpm)} rpm  ${out.torque.toFixed(0)} N·m  ${out.hp.toFixed(0)} hp  drive ${box.capacity.toFixed(1)} m/s²${box.limiting ? '  LIMITER' : ''}`;
+        return `${box.mode} gear ${box.gear < 0 ? 'R' : box.gear}  ${Math.round(box.rpm)} rpm  ${out.torque.toFixed(0)} N·m  ${out.hp.toFixed(0)} hp  drive ${(box.force / 1000).toFixed(1)} kN${box.limiting ? '  LIMITER' : ''}`;
       })(),
       `cam d ${this.chase.distance.toFixed(0)} m  pitch ${(this.chase.pitch * MathUtils.RAD2DEG).toFixed(0)}°  zoom ${this.chase.zoom.toFixed(2)}`,
       c ? `colliders ${c.candidateCount}  bvh built ${c.bvhBuilds} (last ${c.bvhMs.toFixed(1)} ms)` : '',

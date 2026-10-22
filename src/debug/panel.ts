@@ -62,6 +62,7 @@ export class DebugPanel {
     toggle('probes', 'Probes', 'Ground probes, wall rays and the car footprint');
     toggle('history', 'Contacts', 'Recent wall hits (red) and edge stops (orange ledge, blue drop)');
     toggle('overpass', 'Classifier', 'Recent overpass and car-blob test samples at wall hits');
+    toggle('tyres', 'Tyres', 'Axle forces (green grip, orange sliding), front wheel heading and velocity');
 
     const time = row('time');
     for (const [s, label] of SCALES) {

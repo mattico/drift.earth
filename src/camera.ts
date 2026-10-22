@@ -33,12 +33,12 @@ export class ChaseCamera {
     this.shake = Math.min(1.5, this.shake + amount);
   }
 
-  /** Hard-sets the camera behind `pos` facing `heading`. */
-  snap(pos: Vector3, heading: number, distance = C.distance): void {
+  /** Hard-sets the camera behind `pos` facing `heading` (at the preset pitch unless given). */
+  snap(pos: Vector3, heading: number, distance = C.distance, pitch = C.pitchPresets[this.pitchPreset]): void {
     this.target.copy(pos);
     this.yaw = heading;
     this.distance = distance;
-    this.pitch = C.pitchPresets[this.pitchPreset];
+    this.pitch = pitch;
     this.apply();
   }
 

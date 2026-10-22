@@ -58,17 +58,22 @@ The key ships to the browser, so restrict it by HTTP referrer, for example `http
 
 On touch devices an on-screen steering pad and GAS, BRAKE and DRIFT buttons appear. Tap AUTO/MANUAL on the gear selector to switch; in manual, ▼▲ buttons appear under it.
 
-**Gearbox:** the engine makes 420 N·m at 5,000 rpm and 354 hp at 7,100 rpm, with a 7,500 rpm redline and a limiter at 7,800. The six-speed box runs out at 77, 106, 137, 165, 191 and 217 km/h; top speed is about 180 km/h in 5th, limited by drag. 0–100 km/h takes 3.6 s.
-- **Automatic** is the default. It shifts later the harder you press, and holds its gear while sliding so feathering the throttle doesn't short-shift it.
+**Gearbox:** the engine makes 470 N·m at 4,500–5,000 rpm and 395 hp at 7,500 rpm, with a 7,500 rpm redline and a limiter at 7,800. The six-speed box runs out at 77, 106, 137, 165, 191 and 217 km/h; top speed is about 185 km/h, limited by drag. 0–100 km/h takes 4.6 s; traction control keeps a straight-line launch from just spinning the rear tyres, and switches itself off as soon as you steer.
+- **Automatic** is the default. It shifts later the harder you press, judging by road speed rather than the spinning rear wheels, and holds its gear while sliding so feathering the throttle doesn't short-shift it.
 - **Manual:** pressing Q or E switches to manual. Each shift cuts drive for 0.14 s. A downshift that would over-rev is refused (the selector flashes red). In 1st the car sits on the limiter early. The tach rim glows yellow near redline and red on the limiter.
 - **Engine braking** grows with rpm, so a lower gear slows the car harder.
-- **The gear matters for drifting.** Throttle oversteer scales with the drive the current gear can deliver. Held at full throttle, a drift holds about 51° in 2nd and 44° in 3rd but bogs to 33° in 5th.
+- **The gear matters for drifting.** Wheelspin is what keeps the rear sliding, and a high gear can't deliver it. Held at full throttle with a little steering into the slide, a drift holds about 43° in 2nd, 34° in 3rd and 18° in 4th, and straightens in 5th.
 
-**Drifting:** pull the handbrake while turning (or throw the car into a slide) to start a drift. Once sliding:
-- **The angle bends the line.** A sliding car carves round harder the further its rear hangs out (up to about 85°/s at 40° of slip, at any speed), scrubbing a little speed.
-- **Throttle sets the angle and swings the car round.** At half steer, half throttle holds about 30° and carves about 60°/s; full throttle holds about 45° and carves nearly 100°/s. Lifting off lets the car straighten and grip up. Tapping the key feathers it.
-- **Handbrake adds angle and rotation** and scrubs speed; tap it to feather. The angle is capped at 75°. The pull that starts a drift adds none of this for its first 0.3 s, so it doesn't also over-rotate the car.
-- **Steering** turns the car and adds angle; countersteer catches the slide. You need some steering, either way, to hold an angle: with the wheel centred the car straightens out even at full throttle.
+**Drifting** isn't a mode. The car is a rigid body on two tyres (front and rear axles) with real slip: tyre force rises with slip to a peak and then falls away as the tyre slides. The front and rear tyres share one grip budget between braking or drive and cornering. Front–rear load shifts as the car brakes and accelerates. The rear wheels spin up against the engine's inertia through the gear ratio. The game calls it a drift whenever the car's slip angle passes 12°, which is what scoring, smoke and the camera react to. Ways to start one:
+- **Power over:** in 1st–3rd, steer in and floor it. The rear tyres spin, lose their sideways grip and step out.
+- **Handbrake:** locks the rear wheels (and dips the clutch, so the engine revs), so they slide instead of gripping. Pull it while turning; tap it to feather.
+- **Lift-off or trail braking:** lifting or braking moves weight onto the front, so a car turning near the limit gets a little loose.
+
+Once sliding:
+- **Throttle sets the angle.** More wheelspin means less rear grip and more angle; lifting lets the rear grip and the car straightens. Tapping the key feathers it.
+- **Steering is relative to where the car is going.** The front wheels follow the direction of travel by themselves, the way a car's caster pulls them, so a slide countersteers itself. Steering into the slide pulls the nose in and adds angle; steering out takes angle off, or flicks the car into a slide the other way. With the wheel centred and the throttle eased, it straightens up.
+- **The angle bends the line.** A sliding car's tyres turn its path, and big angles scrub speed.
+- **Past about 55°** a stability assist pushes the car back toward the slide, so even full lock and full throttle peak around 75° instead of spinning.
 
 **Scoring:** drifting earns points for speed × slip angle. The multiplier rises every 2 s you hold a drift. A drift chain banks 1.2 s after it ends. Hitting a wall hard during the chain loses it.
 
@@ -80,7 +85,7 @@ src/
   game.ts            phases (locating → driving ⇄ paused), fly-in spawn, fixed-step loop, rebasing
   camera.ts          top-down chase camera
   config.ts          every tunable number
-  car/physics.ts     kinematic arcade drift model, ground following, wall response
+  car/physics.ts     tyre-force chassis (slip, load transfer, wheelspin), ground following, wall response
   car/drivetrain.ts  torque curve, gearbox (auto/manual), clutch, rev limiter, engine braking
   car/carModel.ts    procedural low-poly car, x-ray silhouette, blob shadow
   car/effects.ts     skid-mark ribbons and tyre smoke
@@ -108,6 +113,8 @@ tools/
 - **Things you can drive through.** Two shape tests run on a wall hit, judged from the mesh's shape because the tiles carry no labels:
   - **Car-sized lumps on flat road** are driven through. These are parked cars baked into the mesh and moving cars smeared into translucent "ghosts". A lump qualifies when it is at most 2.2 m tall and has a top near where the probe hit it. A level ray just above roof height must pass clear over it, and the surface must be back at road level within 7 m ahead and 4 m to each side. Buses, long barriers, kerb walls and facades all fail one of these.
   - **Overpass and skyway curtains** (the mesh drapes them down to the road) are recognised by a deck 3.5–9 m up that ends within about 40 m. Skyways can be up to 14 m tall, but only if they end within 9 m.
+  - **Wide underpasses and tunnel portals** are too deep for that test. With no road under the cover, it must be at most 14 m up at the face and at least 5 m up 4–20 m in, which parking decks aren't. The face must also lean toward the car. Level rays at 1.5, 3 and 4.5 m must meet it at least 0.6 m nearer at the top, with downward-facing normals. Deck edges and portals lean that way; facades are vertical. The mesh has floors under some buildings but not others, so road under a cover proves nothing by itself. Where the road is reconstructed under the cover (stacked freeway decks), it must run on for 60 m or come out. The cover must also look like a deck: flat (within 1.5 m) at 5–14 m up, a slab with its underside in the mesh, or a leaning face. Where there's none, as in tunnels and covered roadways that photogrammetry can't see into, tunnel mode starts. Measured on the Lowry Hill tunnel, Glenwood Ave under I-94 and Lyndale Ave under I-394, against one-storey shops, parking ramps and a downtown building.
+  - **Inside a tunnel** the car runs on a virtual road. It starts at the portal's grade and keeps its clearance under the cover. Every 8 m a scan looks up to 220 m ahead for the exit road (walkable, near road height, open above), and the road ramps to meet it, at most 8%. While under the cover, a face ahead counts as the exit curtain if the road resumes within 20 m behind it. Tunnel mode ends once the car is back on real ground with nothing overhead. There are no side walls in the mesh, so nothing stops a car steering off the tunnel's line.
 - **Detail around the car.** A `LoadRegionPlugin` sphere just ahead of the car keeps the finest level of detail loaded there.
 - **Collision speed.** BVHs are built lazily, closest meshes first, so each ray only tests a few nearby meshes.
 
@@ -130,6 +137,7 @@ The camera pulls back with speed, up to 140 m. The scroll wheel scales the dista
   - the car footprint.
 - **Contacts** leaves a marker wherever the car hit a wall (red) or stopped at an edge (orange ledge, blue drop).
 - **Classifier** shows the overpass and car-blob tests' samples along recent wall hits: skirt samples in yellow, far-side samples in cyan, the deck start as a white cross, and magenta, teal or red for overpass, car blob or wall.
+- **Tyres** draws each axle's tyre force (1 m per kN; green while gripping, orange while sliding), the front wheels' heading (cyan) and the car's velocity (white). The stats under the buttons give the slip angles, axle loads, rear wheel speed and road-wheel angle.
 - **Time** runs physics at 1×, ¼× or ⅒×, or freezes it. **Step** advances one 1/120 s step.
 - The legend in the panel lists every colour.
 
@@ -137,6 +145,7 @@ The camera pulls back with speed, up to 140 m. The scroll wheel scales the dista
 
 The game always records the last 60 s of physics steps:
 - position, velocity, heading and input;
+- engine rpm and gear, rear wheel speed, road-wheel angle, slip angles and yaw rate;
 - ground probe states, edge stops, and the wall the solver pushed against (with its hit point, normal and tile error).
 
 It also records events:
@@ -174,6 +183,15 @@ This runs headless Chrome with GPU flags (ANGLE/D3D11), starting a dev server if
 - `--setup "g.physics.reset(...)"` runs code in the page first; `g` is `window.__drift`.
 - In the console, `__drift.debug` exposes `exportTrace()`, `save()`, `mark()`, `set({ wire: true })`, `setTimeScale()`, `stepOnce()` and `reproLink()`.
 - Every real-tile capture is one billable root tileset load.
+
+### Handling
+
+```sh
+pnpm handling                  # every scenario
+pnpm handling drift --timeline # matching scenarios, with slip°/yaw°/km/h every 0.25 s
+```
+
+This runs the car physics on a flat plane through scripted inputs (grip, braking, launch, power-over and handbrake drifts, held drifts in each gear, reversing) and prints the slip angle held, yaw rate, speed, path turned and time spent drifting. No browser or tiles are needed, so run it after changing any tuning in `src/config.ts`.
 
 ### Google Maps Platform terms
 

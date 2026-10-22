@@ -22,7 +22,7 @@ export const FRAME_COLUMNS = [
   'brake',
   'steer',
   'handbrake',
-  /** Bits: 1 airborne, 2 waiting, 4 drifting, 8 contact, 16 long probe used. */
+  /** Bits: 1 airborne, 2 waiting, 4 drifting, 8 contact, 16 long probe used, 32 in a tunnel. */
   'flags',
   /** Corner probe states (Probe enum), 2 bits each: FL | FR<<2 | RL<<4 | RR<<6. */
   'probes',
@@ -42,6 +42,14 @@ export const FRAME_COLUMNS = [
   'rpm',
   /** −1 reverse; +10 when the gearbox is in manual. */
   'gear',
+  /** Rear wheel surface speed (m/s). */
+  'wheelSpeed',
+  /** Road-wheel angle (rad, left +). */
+  'steerAngle',
+  /** Front / rear slip angles (rad). */
+  'slipF',
+  'slipR',
+  'yawRate',
 ] as const;
 
 const STRIDE = FRAME_COLUMNS.length;
@@ -52,6 +60,7 @@ export const FLAG_WAITING = 2;
 export const FLAG_DRIFTING = 4;
 export const FLAG_CONTACT = 8;
 export const FLAG_LONG_PROBE = 16;
+export const FLAG_TUNNEL = 32;
 
 export interface TraceEvent {
   /** Game clock (s). */
@@ -120,7 +129,8 @@ export class TraceRecorder {
       (p.waiting ? FLAG_WAITING : 0) |
       (p.drifting ? FLAG_DRIFTING : 0) |
       (p.contact ? FLAG_CONTACT : 0) |
-      (p.usedLongProbe ? FLAG_LONG_PROBE : 0);
+      (p.usedLongProbe ? FLAG_LONG_PROBE : 0) |
+      (p.tunnel ? FLAG_TUNNEL : 0);
     const s = p.probeState;
     b[o + COL.probes] = s[0] | (s[1] << 2) | (s[2] << 4) | (s[3] << 6);
     b[o + COL.edge] = p.edge;
@@ -136,6 +146,11 @@ export class TraceRecorder {
     b[o + COL.colliders] = colliders;
     b[o + COL.rpm] = p.drivetrain.rpm;
     b[o + COL.gear] = p.drivetrain.gear + (p.drivetrain.mode === 'manual' ? 10 : 0);
+    b[o + COL.wheelSpeed] = p.wheelSpeed;
+    b[o + COL.steerAngle] = p.steer;
+    b[o + COL.slipF] = p.tyre.slipF;
+    b[o + COL.slipR] = p.tyre.slipR;
+    b[o + COL.yawRate] = p.yawRate;
     this.head = (this.head + 1) % this.capacity;
     if (this.count < this.capacity) this.count++;
   }

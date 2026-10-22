@@ -12,7 +12,7 @@
 //   --settle S       wait after spawning before driving (default 2)
 //   --setup JS       run in the page after settling; `g` is window.__drift
 //   --debug LAYERS   overlay layers for the screenshots: wire,height|slope,
-//                    nophoto,probes,history,overpass
+//                    nophoto,probes,history,overpass,tyres
 //   --shots S        also screenshot every S seconds while driving
 //   --out PREFIX     output prefix (default traces/capture-<time>)
 //   --label TEXT     stored in the trace

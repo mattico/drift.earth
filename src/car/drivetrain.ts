@@ -4,10 +4,17 @@ import { DRIVETRAIN as D } from '../config';
 export type ShiftMode = 'auto' | 'manual';
 
 export interface DriveOutput {
-  /** Forward acceleration from the engine this step (m/s², already × throttle). */
+  /** Engine drive force at the rear contact patches this step (N, already × throttle). */
   drive: number;
-  /** Deceleration from engine braking (m/s², ≥ 0). */
+  /** Engine braking force resisting the rear wheels' rotation (N, ≥ 0). */
   engineBrake: number;
+  /**
+   * Rotating inertia the rear wheels carry, as an equivalent mass at the
+   * contact patch (kg): the wheels alone, plus the engine through the gear
+   * ratio when the clutch is locked. Low gears make the wheels hard to spin up
+   * or stop.
+   */
+  inertia: number;
 }
 
 const RPM_PER_RAD_S = 60 / (2 * Math.PI);
@@ -44,8 +51,8 @@ export class Drivetrain {
   rpm: number = D.idleRpm;
   /** The rev limiter cut fuel this step. */
   limiting = false;
-  /** Full-throttle drive available at the current rpm and gear (m/s²), for the drift model. */
-  capacity = 0;
+  /** Drive force delivered last step (N), for the debug readout. */
+  force = 0;
   /** Set briefly when a manual downshift was refused because it would over-rev. */
   refused = 0;
   private shiftTimer = 0;
@@ -83,6 +90,14 @@ export class Drivetrain {
     this.mode = this.mode === 'auto' ? 'manual' : 'auto';
   }
 
+  /** Picks the gear the auto box would hold at `speed` (m/s) on light throttle. */
+  matchSpeed(speed: number): void {
+    let g = 1;
+    while (g < D.gears.length && this.wheelRpm(speed, g) > D.autoUpRpm[1] - 1500) g++;
+    this.gear = g;
+    this.rpm = this.engineRpm = Math.max(D.idleRpm, this.wheelRpm(speed, g));
+  }
+
   reset(): void {
     this.gear = 1;
     this.rpm = this.engineRpm = D.idleRpm;
@@ -91,24 +106,36 @@ export class Drivetrain {
   }
 
   /**
-   * `wheelSpeed` is the driven wheels' surface speed (above the forward speed
-   * when sliding). `reverse` while backing up under the brake key.
+   * `wheelSpeed` is the rear wheels' surface speed (m/s), which runs ahead of
+   * the car under wheelspin and drops to 0 when they lock; `roadSpeed` is the
+   * car's speed over the ground. `reverse` while
+   * backing up under the brake key; `declutch` disconnects the engine (in the
+   * air, and on the handbrake, as a driver would).
    */
-  update(dt: number, wheelSpeed: number, throttle: number, reverse: boolean, airborne: boolean, drifting: boolean): DriveOutput {
+  update(
+    dt: number,
+    wheelSpeed: number,
+    roadSpeed: number,
+    throttle: number,
+    reverse: boolean,
+    declutch: boolean,
+    drifting: boolean,
+  ): DriveOutput {
     this.refused = Math.max(0, this.refused - dt);
     this.autoHold = Math.max(0, this.autoHold - dt);
     if (reverse) this.gear = -1;
     else if (this.gear < 0) this.gear = 1;
 
-    if (this.mode === 'auto' && !reverse && this.shiftTimer <= 0 && this.autoHold <= 0) this.autoShift(wheelSpeed, drifting ? 1 : throttle);
+    if (this.mode === 'auto' && !reverse && !declutch && this.shiftTimer <= 0 && this.autoHold <= 0)
+      this.autoShift(wheelSpeed, roadSpeed, throttle, drifting);
 
-    const ratio = this.gear < 0 ? D.reverse : D.gears[this.gear - 1];
-    const toAccel = (torque: number) => (torque * ratio * D.finalDrive * D.efficiency) / D.wheelRadius / D.mass;
+    const ratio = (this.gear < 0 ? D.reverse : D.gears[this.gear - 1]) * D.finalDrive;
+    const toForce = (torque: number) => (torque * ratio * D.efficiency) / D.wheelRadius;
     const wheel = this.wheelRpm(wheelSpeed);
     let target: number;
     let engaged = true;
-    if (airborne) {
-      // Wheels unloaded: the engine free-revs on the throttle.
+    if (declutch) {
+      // Clutch in: the engine free-revs on the throttle.
       target = D.idleRpm + (D.limiter - D.idleRpm) * throttle;
       engaged = false;
     } else if (wheel < D.clutchRpm) {
@@ -120,7 +147,8 @@ export class Drivetrain {
     }
     // Free or slipping engine speed moves quickly but not instantly; locked to
     // the wheels it follows them exactly.
-    this.engineRpm = engaged && wheel >= D.clutchRpm ? target : MathUtils.damp(this.engineRpm, target, 12, dt);
+    const locked = engaged && wheel >= D.clutchRpm && this.shiftTimer <= 0;
+    this.engineRpm = locked ? target : MathUtils.damp(this.engineRpm, target, 12, dt);
     this.engineRpm = MathUtils.clamp(this.engineRpm, D.idleRpm * 0.8, D.limiter + 300);
 
     // Rev limiter: cut fuel for a moment, which makes the tach bounce.
@@ -129,17 +157,19 @@ export class Drivetrain {
     this.limiting = this.cutTimer > 0;
 
     const torque = torqueAt(this.engineRpm);
-    this.capacity = Math.min(D.maxAccel, toAccel(torque));
     let drive = 0;
     let engineBrake = 0;
     if (this.shiftTimer > 0) {
       this.shiftTimer -= dt;
-    } else if (!airborne && !reverse) {
-      if (throttle > 0 && !this.limiting) drive = Math.min(D.maxAccel, toAccel(torque * throttle));
-      else if (throttle === 0 && wheel >= D.clutchRpm) engineBrake = toAccel(D.engineBrakeTorque * (this.engineRpm / D.redline));
+    } else if (engaged && !reverse) {
+      if (!this.limiting) drive = toForce(torque * throttle);
+      // Engine braking fades in as the throttle closes.
+      if (locked) engineBrake = toForce(D.engineBrakeTorque * (this.engineRpm / D.redline)) * Math.max(0, 1 - throttle / 0.15);
     }
+    this.force = drive;
     this.rpm = MathUtils.damp(this.rpm, this.engineRpm, 30, dt);
-    return { drive, engineBrake };
+    const inertia = (D.wheelInertia + (locked ? D.engineInertia * ratio * ratio : 0)) / D.wheelRadius ** 2;
+    return { drive, engineBrake, inertia };
   }
 
   /** Current torque (N·m) and power (hp), for the debug readout. */
@@ -147,18 +177,29 @@ export class Drivetrain {
     return { torque: torqueAt(this.engineRpm), hp: powerHp(this.engineRpm) };
   }
 
-  /** Sliding, the box shifts as if at full throttle so lifting to feather doesn't short-shift. */
-  private autoShift(wheelSpeed: number, throttle: number): void {
-    const rpm = this.wheelRpm(wheelSpeed);
-    const up = MathUtils.lerp(D.autoUpRpm[0], D.autoUpRpm[1], throttle);
-    const down = MathUtils.lerp(D.autoDownRpm[0], D.autoDownRpm[1], throttle);
-    if (rpm > up && this.gear < D.gears.length) {
+  /**
+   * Shifts up on engine (wheel) speed, down on road speed, so locked rear
+   * wheels don't drop a gear. Sliding, it shifts up only on road speed and as
+   * if at full throttle, so wheelspin and feathering don't shift it, and only
+   * shifts down if the road speed collapses.
+   */
+  private autoShift(wheelSpeed: number, roadSpeed: number, throttle: number, drifting: boolean): void {
+    const upSpeed = drifting ? roadSpeed : Math.max(wheelSpeed, roadSpeed);
+    const up = MathUtils.lerp(D.autoUpRpm[0], D.autoUpRpm[1], drifting ? 1 : throttle);
+    const down = drifting ? D.autoDownRpm[0] : MathUtils.lerp(D.autoDownRpm[0], D.autoDownRpm[1], throttle);
+    // Never shift up into a gear the road speed would shift straight back out
+    // of (wheelspin at low speed holds 1st and bounces off the limiter).
+    if (this.wheelRpm(upSpeed) > up && this.gear < D.gears.length && this.wheelRpm(roadSpeed, this.gear + 1) > down + 300) {
       // Several gears at once if far over (e.g. spawned already moving).
       let g = this.gear + 1;
-      while (g < D.gears.length && this.wheelRpm(wheelSpeed, g) > D.redline) g++;
+      while (g < D.gears.length && this.wheelRpm(upSpeed, g) > D.redline) g++;
       this.shift(g);
-    }
-    else if (rpm < down && this.gear > 1 && this.wheelRpm(wheelSpeed, this.gear - 1) < D.autoUpRpm[1] - 400) this.shift(this.gear - 1);
+    } else if (
+      this.wheelRpm(roadSpeed) < down &&
+      this.gear > 1 &&
+      this.wheelRpm(roadSpeed, this.gear - 1) < D.autoUpRpm[1] - 400
+    )
+      this.shift(this.gear - 1);
   }
 
   private shift(gear: number): void {

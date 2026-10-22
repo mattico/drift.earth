@@ -15,6 +15,7 @@ const FLAGS = [
   [4, 'D'], // drifting
   [8, 'C'], // contact
   [16, 'L'], // long probe used
+  [32, 'T'], // in a tunnel (virtual road)
 ];
 
 export function analyse(trace) {
@@ -97,6 +98,46 @@ export function analyse(trace) {
     e.repro = reproLink(trace, rows, cols, events, Math.max(0, e.start - Math.round(2 / dt)));
   }
 
+  // Drifts: runs of the drifting flag.
+  const drifts = [];
+  let d = null;
+  rows.forEach((r, i) => {
+    if (!(get(r, 'flags') & 4)) {
+      d = null;
+      return;
+    }
+    if (!d || i !== d.end + 1) {
+      d = { start: i, end: i, maxSlip: 0, speed: 0, throttle: 0, handbrake: 0, gears: new Set(), n: 0, turn: 0, prevDir: null };
+      drifts.push(d);
+    }
+    d.end = i;
+    const s = slipOf(r, cols);
+    if (Math.abs(s) > Math.abs(d.maxSlip)) d.maxSlip = s;
+    d.speed += get(r, 'speed');
+    d.throttle += get(r, 'throttle');
+    d.handbrake += get(r, 'handbrake');
+    if (cols.gear !== undefined) d.gears.add(get(r, 'gear') % 10);
+    d.n++;
+    // Path turn, accumulated so it doesn't wrap at ±180°.
+    if (get(r, 'speed') > 1) {
+      const a = Math.atan2(get(r, 'vx'), -get(r, 'vz'));
+      if (d.prevDir !== null) d.turn += Math.atan2(Math.sin(a - d.prevDir), Math.cos(a - d.prevDir));
+      d.prevDir = a;
+    }
+  });
+  for (const e of drifts) {
+    const r0 = rows[e.start];
+    e.t = rel(get(r0, 'step'));
+    e.duration = e.n * dt;
+    e.speed /= e.n;
+    e.throttle /= e.n;
+    e.handbrake /= e.n;
+    // How far the direction of travel turned over the drift (left +).
+    e.turn = (-e.turn * 180) / Math.PI;
+    delete e.prevDir;
+    e.gears = [...e.gears].sort((x, y) => x - y);
+  }
+
   // Hard decelerations with no contact (and no brake) — invisible walls the solver didn't log.
   const decels = [];
   const win = Math.round(0.25 / dt);
@@ -127,7 +168,17 @@ export function analyse(trace) {
     if (get(b, 'flags') & 1) air += dt;
     if (get(b, 'flags') & 2) wait += dt;
   }
-  return { cols, rows, dt, rel, episodes, decels, samples, logs, marks, other, events, dist, maxSpeed, air, wait, lastStep };
+  return { cols, rows, dt, rel, episodes, drifts, decels, samples, logs, marks, other, events, dist, maxSpeed, air, wait, lastStep };
+}
+
+/** Body slip angle (°) of a frame, from its velocity and heading: negative with the rear out to the right. */
+function slipOf(r, cols) {
+  const h = r[cols.heading];
+  const vx = r[cols.vx];
+  const vz = r[cols.vz];
+  const vF = -vx * Math.sin(h) - vz * Math.cos(h);
+  const vL = -vx * Math.cos(h) + vz * Math.sin(h);
+  return (Math.atan2(vL, Math.max(Math.abs(vF), 1)) * 180) / Math.PI;
 }
 
 function decodeProbes(v) {
@@ -164,8 +215,16 @@ function nearbyOverpass(events, rows, cols, p, epoch) {
   const fmt = (s) => `${s[0].toFixed(1)}:${s[1] === null ? '–' : s[1].toFixed(1)}`;
   const phase = (p) => e.samples.filter((s) => s[2] === p).map(fmt).join(' ');
   return {
-    result: e.result ? (e.reason === 'blob' ? 'car blob (passed)' : 'overpass') : 'wall',
-    reason: e.reason,
+    result: e.result
+      ? e.reason === 'blob'
+        ? 'car blob (passed)'
+        : e.reason.startsWith('portal')
+          ? 'underpass/tunnel portal'
+          : e.reason.startsWith('tunnel')
+            ? 'tunnel exit'
+            : 'overpass'
+      : 'wall',
+    reason: e.overpass ? `${e.reason}; overpass test: ${e.overpass}` : e.reason,
     deck: e.start >= 0 ? `${e.deck.toFixed(1)} m at ${e.start.toFixed(1)} m` : null,
     samples: ['skirt', 'far', 'along', 'side'].filter((p) => phase(p)).map((p) => `${p}[${phase(p)}]`).join(' '),
     distance: best.d,
@@ -263,6 +322,17 @@ export function report(trace, opts = {}) {
     if (e.repro) say(`      repro (2 s before): ${e.repro}`);
   }
 
+  if (a.drifts.length) {
+    say();
+    say(`drifts: ${a.drifts.length}${a.drifts.length > max ? `, showing the last ${max}` : ''}  (slip negative = rear out to the right; turn = how far the path bent)`);
+    for (const e of a.drifts.slice(-max)) {
+      const gears = e.gears.length ? ` · gear ${e.gears.map((g) => (g < 0 ? 'R' : g)).join('/')}` : '';
+      say(
+        `  ${T(e.t)} ${f1(e.duration)} s · max slip ${Math.round(e.maxSlip)}° · turn ${Math.round(e.turn)}° · ${kmh(e.speed)} avg · throttle ${f1(e.throttle)} · handbrake ${Math.round(e.handbrake * 100)}%${gears}`,
+      );
+    }
+  }
+
   if (a.decels.length) {
     say();
     say('hard decelerations without contact or brake:');
@@ -300,7 +370,7 @@ function windowDump(a, spec) {
   const [from, to] = spec.split(':').map(Number);
   const { rows, cols, rel } = a;
   const g = (r, c) => r[cols[c]];
-  const lines = ['      t       x       y       z  km/h    gap   thr   str  flags probes edge   pen  ray  wall-h  normal'];
+  const lines = ['      t       x       y       z  km/h  slip    gap   thr   str  flags probes edge   pen  ray  wall-h  normal'];
   for (let i = 0; i < rows.length; i += 3) {
     const r = rows[i];
     const t = rel(g(r, 'step'));
@@ -313,6 +383,7 @@ function windowDump(a, spec) {
         f2(g(r, 'y')).padStart(7),
         f1(g(r, 'z')).padStart(7),
         String(Math.round(g(r, 'speed') * 3.6)).padStart(5),
+        `${Math.round(slipOf(r, cols))}°`.padStart(5),
         f2(g(r, 'y') - g(r, 'groundY')).padStart(6),
         f1(g(r, 'throttle')).padStart(5),
         f1(g(r, 'steer')).padStart(5),
@@ -326,7 +397,7 @@ function windowDump(a, spec) {
       ].join(' '),
     );
   }
-  lines.push('gap: body above ground · flags: A airborne · W waiting for tiles · D drifting · C contact · L long probe; probes FL FR RL RR: g ground, b blocked, m miss, d drop');
+  lines.push('gap: body above ground · flags: A airborne · W waiting for tiles · D drifting · C contact · L long probe · T tunnel; probes FL FR RL RR: g ground, b blocked, m miss, d drop');
   return lines.join('\n');
 }
 

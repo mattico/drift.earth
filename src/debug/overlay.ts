@@ -29,6 +29,8 @@ export interface OverlayLayers {
   history: boolean;
   /** Recent overpass-classifier samples. */
   overpass: boolean;
+  /** Tyre forces at each axle, the front wheels' direction and the car's velocity. */
+  tyres: boolean;
 }
 
 /** Colliders further than this from the car are left out of the overlay. */
@@ -230,6 +232,7 @@ export class DebugOverlay {
     if (layers.probes) this.drawProbes(p);
     if (layers.history) this.drawHistory();
     if (layers.overpass) this.drawDecisions();
+    if (layers.tyres) this.drawTyres(p);
     const g = this.lines.geometry;
     g.setDrawRange(0, this.segs * 2);
     (g.attributes.position as BufferAttribute).needsUpdate = true;
@@ -354,6 +357,32 @@ export class DebugOverlay {
         this.seg(hx, hy, hz, hx + nx * 0.8, hy + ny * 0.8, hz + nz * 0.8, col);
       }
     }
+  }
+
+  /**
+   * Axle forces (1 m per kN; green gripping, orange sliding), the front wheels'
+   * heading (cyan) and the velocity (white, 1 m per 2 m/s), just above the road.
+   */
+  private drawTyres(p: CarPhysics): void {
+    const fx = -Math.sin(p.heading);
+    const fz = -Math.cos(p.heading);
+    const lx = -Math.cos(p.heading);
+    const lz = Math.sin(p.heading);
+    const y = p.groundY + 0.4;
+    const t = p.tyre;
+    const axle = (d: number, f: [number, number], sliding: boolean) => {
+      const x = p.pos.x + fx * d;
+      const z = p.pos.z + fz * d;
+      const k = 1 / 1000;
+      this.seg(x, y, z, x + (fx * f[0] + lx * f[1]) * k, y, z + (fz * f[0] + lz * f[1]) * k, sliding ? 0xffa020 : 0x40ff60);
+      return [x, z] as const;
+    };
+    const [ax, az] = axle(P.cgToFront, t.forceF, t.slideF > 0);
+    axle(-(P.wheelbase - P.cgToFront), t.forceR, t.slideR > 0);
+    const wx = fx * Math.cos(p.steer) + lx * Math.sin(p.steer);
+    const wz = fz * Math.cos(p.steer) + lz * Math.sin(p.steer);
+    this.seg(ax - wx * 0.8, y, az - wz * 0.8, ax + wx * 0.8, y, az + wz * 0.8, 0x40e0ff);
+    this.seg(p.pos.x, y, p.pos.z, p.pos.x + p.vel.x / 2, y, p.pos.z + p.vel.z / 2, 0xffffff);
   }
 
   private drawHistory(): void {

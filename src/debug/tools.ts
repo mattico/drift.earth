@@ -26,7 +26,7 @@ const STORAGE = 'drift.earth:debug';
 const SAMPLE_EVERY = 0.5;
 export const TIME_SCALES = [1, 0.25, 0.1, 0];
 
-const DEFAULT_LAYERS: OverlayLayers = { wire: true, fill: 'off', photo: true, probes: true, history: true, overpass: true };
+const DEFAULT_LAYERS: OverlayLayers = { wire: true, fill: 'off', photo: true, probes: true, history: true, overpass: true, tyres: true };
 
 /**
  * Debug panel, collision overlay and the always-on trace recorder. Also the
@@ -101,6 +101,7 @@ export class DebugTools {
         probes: on.has('probes'),
         history: on.has('history'),
         overpass: on.has('overpass'),
+        tyres: on.has('tyres'),
       };
     }
     this.open = true;
