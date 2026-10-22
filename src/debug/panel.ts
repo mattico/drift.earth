@@ -11,11 +11,13 @@ export interface PanelHandlers {
   onClose(): void;
 }
 
-/** The overlay and trace controls, or the car's tuning (debug/tuning.ts). */
-export type PanelTab = 'view' | 'tuning';
+/** The overlay and trace controls, the car's tuning (debug/tuning.ts), or telemetry (debug/scope.ts). */
+export type PanelTab = 'view' | 'tuning' | 'scope';
+export const PANEL_TABS: readonly PanelTab[] = ['view', 'tuning', 'scope'];
 const TABS: Array<[PanelTab, string, string]> = [
   ['view', 'View', 'Overlay, time and trace controls'],
   ['tuning', 'Tuning', 'The car’s chassis and drivetrain numbers, and presets'],
+  ['scope', 'Scope', 'Telemetry graphs, ghost runs to compare against, and scripted manoeuvres'],
 ];
 
 const FILLS: FillMode[] = ['off', 'height', 'slope'];
@@ -39,6 +41,8 @@ export class DebugPanel {
   private readonly tabButtons = new Map<PanelTab, HTMLButtonElement>();
   /** Where the Tuning tab's editor builds itself. */
   readonly tuningHost = document.createElement('div');
+  /** Where the Scope tab builds itself. */
+  readonly scopeHost = document.createElement('div');
   private fill = document.createElement('button');
   private layers: OverlayLayers | null = null;
   private noticeTimer = 0;
@@ -55,7 +59,8 @@ export class DebugPanel {
         <div class="dbg-row" data-row="trace"><span class="dbg-label">Trace</span></div>
         <details class="dbg-legend"><summary>Legend</summary><div class="dbg-legend-body"></div></details>
       </div>
-      <div class="dbg-page" data-page="tuning"></div>`;
+      <div class="dbg-page" data-page="tuning"></div>
+      <div class="dbg-page" data-page="scope"></div>`;
     const tabs = root.querySelector('.dbg-tabs')!;
     for (const [tab, label, title] of TABS) {
       const b = this.button(label, title, () => this.h.onTab(tab));
@@ -64,6 +69,7 @@ export class DebugPanel {
       tabs.append(b);
     }
     root.querySelector('[data-page="tuning"]')!.append(this.tuningHost);
+    root.querySelector('[data-page="scope"]')!.append(this.scopeHost);
     const row = (name: string) => root.querySelector<HTMLElement>(`[data-row="${name}"]`)!;
 
     const view = row('view');
@@ -84,7 +90,17 @@ export class DebugPanel {
     toggle('probes', 'Probes', 'Ground probes, wall rays and the car footprint');
     toggle('history', 'Contacts', 'Recent wall hits (red) and edge stops (orange ledge, blue drop)');
     toggle('overpass', 'Classifier', 'Recent overpass and car-blob test samples at wall hits');
-    toggle('tyres', 'Tyres', 'Axle forces (green grip, orange sliding), front wheel heading and velocity');
+    toggle(
+      'tires',
+      'Tires',
+      'Axle forces (green grip, orange sliding), front wheel heading and velocity; slip wedges at each axle against the tire’s peak; axle load bars against static (weight transfer); the path arc and turn centre; the drift angle',
+    );
+    toggle(
+      'trail',
+      'Trail',
+      'The car’s last 18 s of driving, coloured by the first that applied: airborne, stability control, ABS, traction control, sliding (both, rear, front), drifting, grip',
+    );
+    toggle('gauges', 'Gauges', 'Live gauges over the game view: friction circles, g-g, inputs, aids, drivetrain (stay up with the panel closed)');
 
     const time = row('time');
     for (const [s, label] of SCALES) {
@@ -119,7 +135,7 @@ export class DebugPanel {
   setTab(tab: PanelTab): void {
     for (const [t, b] of this.tabButtons) b.classList.toggle('on', t === tab);
     // The tuning form wants a little more room for its sliders and number boxes.
-    this.root.classList.toggle('dbg-wide', tab === 'tuning');
+    this.root.classList.toggle('dbg-wide', tab === 'tuning' || tab === 'scope');
     for (const page of this.root.querySelectorAll<HTMLElement>('.dbg-page')) page.hidden = page.dataset.page !== tab;
   }
 
@@ -177,11 +193,43 @@ function legend(): string {
     swatch('#40e0ff', 'far-side / across sample'),
     swatch('#ffffff', 'deck start'),
   ].join('');
+  const tires = [
+    swatch('#40ff60', 'force, gripping'),
+    swatch('#ffa020', 'force, sliding'),
+    swatch('#40e0ff', 'front wheel heading'),
+    swatch('#ffffff', 'velocity'),
+    swatch('#9fb0ff', 'path arc (R = v / yaw rate) and turn centre'),
+  ].join('');
+  const slip = [swatch('#40ff60', 'under 70% of peak'), swatch('#ffc030', '70–100% of peak'), swatch('#ff3030', 'past the peak')].join('');
+  const load = [swatch('#ffb060', 'above static'), swatch('#60a0ff', 'below static'), swatch('#ffffff', 'static load')].join('');
+  const drift = [
+    swatch('#ffffff', 'under 12°'),
+    swatch('#b080ff', '12–35°'),
+    swatch('#ff80c0', '35–60°'),
+    swatch('#ff3030', 'over 60°'),
+  ].join('');
+  // In priority order, as TRAIL_STATES in overlay.ts.
+  const trail = [
+    swatch('#909090', 'airborne'),
+    swatch('#ff40ff', 'stability control'),
+    swatch('#3070ff', 'ABS'),
+    swatch('#40e0ff', 'traction control'),
+    swatch('#ff3030', 'both axles sliding'),
+    swatch('#ffa020', 'rear sliding'),
+    swatch('#ffe040', 'front sliding'),
+    swatch('#b080ff', 'drifting, tires gripping'),
+    swatch('#40ff60', 'grip'),
+  ].join('');
   return [
     `<div><b>Height above the car's ground</b>${heights}</div>`,
     `<div><b>Slope fill</b>${slope}</div>`,
     `<div><b>Ground probes</b>${probes}</div>`,
     `<div><b>Wall rays</b>${rays}</div>`,
     `<div><b>Overpass test</b>${overpass}</div>`,
+    `<div><b>Tires</b>${tires}</div>`,
+    `<div><b>Slip wedges (wheel heading to patch travel)</b>${slip}</div>`,
+    `<div><b>Load bars (white tick = static)</b>${load}</div>`,
+    `<div><b>Drift angle (heading to velocity, 10° ticks)</b>${drift}</div>`,
+    `<div><b>Trail (first that applied)</b>${trail}</div>`,
   ].join('');
 }

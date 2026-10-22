@@ -269,6 +269,7 @@ export class InputManager {
     handbrake ||= this.touch.handbrake;
 
     // Gamepads (standard mapping), merged: any connected pad can drive.
+    let padBrakeMax = 0;
     let navX = 0;
     let navY = 0;
     for (const pad of navigator.getGamepads?.() ?? []) {
@@ -288,6 +289,7 @@ export class InputManager {
       if (Math.abs(padSteer) > Math.abs(steer)) steer = padSteer;
       throttle = Math.max(throttle, padThrottle);
       brake = Math.max(brake, padBrake);
+      padBrakeMax = Math.max(padBrakeMax, padBrake);
       handbrake ||= !!held[PAD.a];
       if (edge(PAD.y)) actions.reset = true;
       if (edge(PAD.menu)) actions.pause = true;
@@ -332,7 +334,9 @@ export class InputManager {
 
     this.pressed.clear();
     if (!this.enabled) return { car: { throttle: 0, brake: 0, steer: 0, handbrake: false }, actions };
-    return { car: { throttle, brake, steer, handbrake }, actions };
+    // A key or touch button is on/off; a trigger pressed as far is the driver's own easing.
+    const brakeDigital = brake > padBrakeMax;
+    return { car: { throttle, brake, steer, handbrake, brakeDigital }, actions };
   }
 
   /** A held direction moves once, then repeats after NAV_DELAY every NAV_REPEAT. */

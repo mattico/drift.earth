@@ -88,7 +88,7 @@ const SCENARIOS = {
   // Front-drive: power understeers, lifting tucks the nose in and lets the
   // rear come round, and the handbrake starts slides the throttle pulls
   // straight. Over-committing (full lock, handbrake held) can still spin it.
-  // Rear-drive: floored in 1st it lights up the tyres; in 2nd it hooks up in a
+  // Rear-drive: floored in 1st it lights up the tires; in 2nd it hooks up in a
   // straight line and lets go with moderate steering, the edge a handbrake blip
   // tips over into a drift that the throttle holds.
   'burnout 1st from rest': [0, [[2.5, I(1, 0)]], { rwd: true }],

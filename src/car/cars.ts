@@ -1,4 +1,4 @@
-// The cars. Each one's chassis, tyres, steering, brakes and drivetrain; its body
+// The cars. Each one's chassis, tires, steering, brakes and drivetrain; its body
 // model (carModel.ts) and engine sound (audio.ts) are looked up by its id.
 // Units are SI (metres, seconds, radians, newtons) unless noted.
 
@@ -30,7 +30,7 @@ export interface ChassisSpec {
   /** Sets how much load braking and power shift between axles. */
   cgHeight: number;
 
-  // Tyres. Force rises with slip to μ·load at the peak slip angle (lateral) or
+  // Tires. Force rises with slip to μ·load at the peak slip angle (lateral) or
   // ratio (longitudinal, wheel vs road speed), then falls to `slide`·peak when
   // sliding. Combined slip shares one friction budget, so a spinning or locked
   // wheel has little sideways grip left: that is what lets the rear step out
@@ -48,7 +48,7 @@ export interface ChassisSpec {
 
   // Steering. The command is a road-wheel angle (speed-scaled, rate-limited so
   // digital input feels analogue) added to a caster-like self-alignment: with
-  // the wheel centred, the front tyres point along their direction of travel,
+  // the wheel centred, the front tires point along their direction of travel,
   // so a sliding car countersteers itself and the input steers relative to the
   // path, as an experienced driver's hands would.
   steerMax: number;
@@ -56,7 +56,7 @@ export interface ChassisSpec {
   steerSpeedFalloff: number;
   steerRate: number;
   steerReturn: number;
-  /** 0 = none, 1 = front tyres fully trail the direction of travel. */
+  /** 0 = none, 1 = front tires fully trail the direction of travel. */
   steerAlign: number;
   /** Road-wheel angle limit, countersteer included. */
   wheelLock: number;
@@ -66,7 +66,7 @@ export interface ChassisSpec {
   brakeDecel: number;
   /** …front share. */
   brakeFront: number;
-  /** Braking force cap as a share of the tyre's grip. */
+  /** Braking force cap as a share of the tire's grip. */
   absLimit: number;
   /** Rear brake force at full pull, × weight. */
   handbrakeForce: number;
@@ -81,9 +81,9 @@ export interface ChassisSpec {
   /** Rear slip angle it lets the car reach first (default peakSlipAngle): a sport mode, so lift-off slides happen. */
   stabilitySlip?: number;
   /**
-   * Traction control, 0 (none) … 1: limits drive to what the driven tyres can
+   * Traction control, 0 (none) … 1: limits drive to what the driven tires can
    * take while the wheel is near centre (steer, and it lets them spin). With
-   * none, flooring a low gear spins the tyres up: a burnout.
+   * none, flooring a low gear spins the tires up: a burnout.
    */
   tractionControl: number;
 }

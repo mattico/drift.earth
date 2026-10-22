@@ -12,7 +12,7 @@ import { CarAudio } from './audio';
 import { ChaseCamera, wrapAngle } from './camera';
 import { CarModel } from './car/carModel';
 import { CARS, DEFAULT_CAR, type CarId, type CarSpec } from './car/cars';
-import { TyreEffects, type WheelSample } from './car/effects';
+import { TireEffects, type WheelSample } from './car/effects';
 import { CarPhysics, type CarInput } from './car/physics';
 import { CAMERA, PHYSICS, SCORING } from './config';
 import { DebugTools } from './debug/tools';
@@ -72,7 +72,7 @@ export class Game {
   private readonly scene = new Scene();
   private readonly chase: ChaseCamera;
   private car = new CarModel(CARS[DEFAULT_CAR]);
-  private readonly effects = new TyreEffects();
+  private readonly effects = new TireEffects();
   private readonly physics: CarPhysics;
   readonly debug: DebugTools;
   private readonly score = new DriftScore();
@@ -154,6 +154,7 @@ export class Game {
         phase: () => this.phase,
         statsText: () => this.debugText(),
         onTuned: (spec, path) => this.onTuned(spec, path),
+        teleport: (pos, heading, kmh) => this.spawn(pos, heading, kmh),
       },
       this.scene,
     );
@@ -377,10 +378,12 @@ export class Game {
     const D = prev.debug;
     this.debug.set({ ...D.layers, open: D.open });
     this.debug.setTab(D.tab);
+    this.debug.adopt(D);
     if (prev.audio.muted) this.audio.toggleMute();
     this.minimap.adopt(prev.minimap);
     const old = prev.physics;
     this.setCar(old.car.id);
+    if (old.assists) Object.assign(this.physics.assists, old.assists);
     // Unsaved tuning would be lost with the old editor; saved, the preset reloads with any edits to the stock cars.
     if (D.tuning.dirty) {
       this.physics.setCar(this.debug.tuning.load(old.car.id, D.tuning.spec));
@@ -636,8 +639,9 @@ export class Game {
     const forced = this.debug.takeSteps(PHYSICS.maxSubsteps);
     let steps = 0;
     while ((this.acc >= PHYSICS.dt || steps < forced) && steps < PHYSICS.maxSubsteps) {
-      P.step(inp, PHYSICS.dt, collider);
-      this.debug.onStep(P, inp, collider.candidateCount);
+      const stepInp = this.debug.input(inp);
+      P.step(stepInp, PHYSICS.dt, collider);
+      this.debug.onStep(P, stepInp, collider.candidateCount);
       // Scraping along a wall doesn't score, and a real hit throws the chain away.
       this.score.tick(PHYSICS.dt, P.drifting, P.speed, P.slip, P.contact);
       if (P.impact > SCORING.crashImpact) this.score.crash();
@@ -693,8 +697,8 @@ export class Game {
         boost: box.boost,
         speed: P.speed,
         wheelSpin: P.wheelSpin,
-        slideF: P.tyre.slideF,
-        slideR: P.tyre.slideR,
+        slideF: P.tire.slideF,
+        slideR: P.tire.slideR,
         airborne: P.airborne,
       },
       dt,
@@ -711,11 +715,11 @@ export class Game {
     const P = this.physics;
     const sinH = Math.sin(heading);
     const cosH = Math.cos(heading);
-    // Smoke follows how fast each axle's tyres slide over the road: drifts,
+    // Smoke follows how fast each axle's tires slide over the road: drifts,
     // burnouts and lock-ups. A front-drive car's fronts mark under real
     // wheelspin or understeer, not the scrub of a steered drift.
-    const rear = P.airborne ? 0 : Math.max(0, P.tyre.slideR - 1.5) / 6 + (handbrake && P.speed > 3 ? 0.2 : 0);
-    const front = P.airborne || P.car.drive !== 'fwd' ? 0 : Math.max(0, P.tyre.slideF - 4) / 6;
+    const rear = P.airborne ? 0 : Math.max(0, P.tire.slideR - 1.5) / 6 + (handbrake && P.speed > 3 ? 0.2 : 0);
+    const front = P.airborne || P.car.drive !== 'fwd' ? 0 : Math.max(0, P.tire.slideF - 4) / 6;
     // On the plane of the road, or on a hill one axle's marks sink under it.
     const n = P.groundNormal;
     const sample = ([cx, cz]: readonly [number, number], sliding: number): WheelSample => {
@@ -825,7 +829,7 @@ export class Game {
       `drift ${P.drifting} air ${P.airborne} wait ${P.waiting}  n.y ${P.groundNormal.y.toFixed(3)}${
         P.tunnel ? `  tunnel ${P.tunnel.d.toFixed(0)} m grade ${(P.tunnel.grade * 100).toFixed(1)}%${P.tunnel.exit ? ' exit seen' : ''}` : ''
       }`,
-      `tyres  front ${(P.tyre.slipF * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tyre.loadF / 1000).toFixed(1)} kN  rear ${(P.tyre.slipR * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tyre.loadR / 1000).toFixed(1)} kN  wheel ${(P.wheelSpeed * MPH).toFixed(0)} mph  steer ${(P.steer * MathUtils.RAD2DEG).toFixed(0)}°`,
+      `tires  front ${(P.tire.slipF * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tire.loadF / 1000).toFixed(1)} kN  rear ${(P.tire.slipR * MathUtils.RAD2DEG).toFixed(0)}° ${(P.tire.loadR / 1000).toFixed(1)} kN  wheel ${(P.wheelSpeed * MPH).toFixed(0)} mph  steer ${(P.steer * MathUtils.RAD2DEG).toFixed(0)}°`,
       (() => {
         const box = P.drivetrain;
         const out = box.output();

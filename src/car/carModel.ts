@@ -42,7 +42,7 @@ export interface CarPose {
  * behind something (GreaterDepth) and only once per pixel (stencil).
  */
 function ghostMaterial(color: Color): ShaderMaterial {
-  // Dark parts (tyres, glass) still need to read against the scenery.
+  // Dark parts (tires, glass) still need to read against the scenery.
   const c = color.clone();
   c.setRGB(Math.max(c.r, 0.22), Math.max(c.g, 0.22), Math.max(c.b, 0.26));
   return new ShaderMaterial({
@@ -101,7 +101,7 @@ export interface BodyKit {
 export interface Body {
   shell: Mesh;
   /**
-   * One wheel (tyre and rim) centred on its axle, which runs along X, its face
+   * One wheel (tire and rim) centred on its axle, which runs along X, its face
    * toward +X (mirrored for the left side); cloned for all four.
    */
   wheel?: Object3D;
@@ -243,7 +243,7 @@ export class CarModel {
       ghost.scale.copy(p.scale);
       // Each pixel goes to the first ghost drawn there, so draw what the chase
       // camera sees on top first (cabin, roof, stripes, lights), then the
-      // shell. (No tyres: they dip into the road and would glint through it.)
+      // shell. (No tires: they dip into the road and would glint through it.)
       ghost.renderOrder = p === shell ? 11 : mat === glass ? 10.5 : 10;
       p.parent!.add(ghost);
     }

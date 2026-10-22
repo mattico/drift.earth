@@ -9,6 +9,8 @@ export interface CarInput {
   brake: number; // 0..1 (reverse when stopped)
   steer: number; // −1 right … +1 left
   handbrake: boolean;
+  /** The brake is an on/off key or touch button rather than an analog trigger. */
+  brakeDigital?: boolean;
 }
 
 export interface CarEvents {
@@ -123,11 +125,11 @@ export interface ProbeDebug {
   hitY: number | null;
 }
 
-export interface TyreState {
+export interface TireState {
   /** Slip angles (rad, signed like `slip`) of the front road wheels and rear axle. */
   slipF: number;
   slipR: number;
-  /** Sliding speed at each contact patch (m/s), 0 while the tyre grips. */
+  /** Sliding speed at each contact patch (m/s), 0 while the tire grips. */
   slideF: number;
   slideR: number;
   /** Normal loads (N). */
@@ -137,6 +139,29 @@ export interface TyreState {
   forceF: [number, number];
   forceR: [number, number];
 }
+
+/** What the driver aids did in the last substep (0 while idle), for the debug tools. */
+export interface AidState {
+  /** Share of the foot brake ABS held back (0 none … 1 all of it). */
+  abs: number;
+  /** Share of the engine's drive traction control cut (0 … 1). */
+  tc: number;
+  /** Yaw acceleration stability control added (rad/s², signed like `yawRate`). */
+  stability: number;
+  /** Seconds until stability control re-arms after a deliberate slide (0: armed). */
+  rearm: number;
+}
+
+/** Driver aids switched on. Off ignores the preset's numbers for that aid without changing them. */
+export interface Assists {
+  /** Off: the foot brake isn't capped to the grip or let off as the wheels lock. */
+  abs: boolean;
+  /** Off: drive is never cut. */
+  tc: boolean;
+  /** Off: no yaw correction, whatever the rear does. */
+  esc: boolean;
+}
+export type Assist = keyof Assists;
 
 /** What the wall solver pushed against during the last step (pen 0 if nothing). */
 export interface WallContact {
@@ -187,7 +212,7 @@ export class CarPhysics {
   vy = 0;
   /** The car being driven (setCar swaps it). */
   car: CarSpec = CARS[DEFAULT_CAR];
-  /** Its chassis, tyres, steering and brakes. */
+  /** Its chassis, tires, steering and brakes. */
   private c: ChassisSpec = this.car.chassis;
   /** Probe corners: front-left, front-right, rear-left, rear-right. Front is −Z in car space. */
   private corners: Array<[number, number]> = [];
@@ -199,7 +224,9 @@ export class CarPhysics {
   /** Front road-wheel angle (rad, left +), self-alignment included. */
   steer = 0;
   /** The driver's part of `steer`. */
-  private steerCmd = 0;
+  steerCmd = 0;
+  /** Road-wheel angle full steering input asks for at this speed (rad). */
+  steerLock = 0;
   /** Driven wheels' surface speed (m/s): ahead of the car under wheelspin, 0 when locked. */
   wheelSpeed = 0;
   /**
@@ -216,15 +243,26 @@ export class CarPhysics {
   private intent = 0;
   /** How much traction control is limiting drive this step (0 off … 1). */
   private traction = 0;
-  /** Tyre state from the last substep, for effects and tracing. */
-  readonly tyre: TyreState = { slipF: 0, slipR: 0, slideF: 0, slideR: 0, loadF: 0, loadR: 0, forceF: [0, 0], forceR: [0, 0] };
+  /** Tire state from the last substep, for effects and tracing. */
+  readonly tire: TireState = { slipF: 0, slipR: 0, slideF: 0, slideR: 0, loadF: 0, loadR: 0, forceF: [0, 0], forceR: [0, 0] };
+  /** Which driver aids are on (the debug gauges' lamps switch them). */
+  readonly assists: Assists = { abs: true, tc: true, esc: true };
+  /** What ABS, traction and stability control did in the last substep. */
+  readonly aids: AidState = { abs: 0, tc: 0, stability: 0, rearm: 0 };
+  /** The body's acceleration over the last substep (m/s²; forward +, left +), drag included: what a g-meter reads. */
+  accelLong = 0;
+  accelLat = 0;
+  /** Foot brake force the spinAxle call just made actually applied (ABS releases it). */
+  private footApplied = 0;
 
   /** The car is sliding (an observation of the slip angle, not a mode). */
   drifting = false;
   private lowSlipTime = 0;
   /** Throttle and handbrake smoothed over `pedalTau`, so tapping a digital key feathers. */
-  private throttleF = 0;
-  private handbrakeF = 0;
+  throttleF = 0;
+  handbrakeF = 0;
+  /** Foot brake the driver is asking for (0…1), eased in from a digital brake. */
+  brakeF = 0;
 
   /** Body pitch (nose up +) and roll (left side up +) from the ground plane. */
   pitch = 0;
@@ -294,7 +332,7 @@ export class CarPhysics {
     this.stopRotating();
     this.intent = 0;
     this.drifting = false;
-    this.throttleF = this.handbrakeF = 0;
+    this.throttleF = this.handbrakeF = this.brakeF = 0;
   }
 
   get forward(): Vector3 {
@@ -318,9 +356,16 @@ export class CarPhysics {
     this.steer = this.steerCmd = 0;
     this.wheelSpeed = this.rollSpeed = this.wheelSpin = 0;
     this.accelF = 0;
-    this.intent = 0;
+    this.intent = this.traction = 0;
     this.drifting = false;
-    this.throttleF = this.handbrakeF = 0;
+    this.lowSlipTime = 0;
+    this.throttleF = this.handbrakeF = this.brakeF = 0;
+    // So a scripted run repeats exactly, whatever the car did before it.
+    const t = this.tire;
+    t.slipF = t.slipR = t.slideF = t.slideR = t.loadF = t.loadR = 0;
+    t.forceF[0] = t.forceF[1] = t.forceR[0] = t.forceR[1] = 0;
+    this.accelLong = this.accelLat = 0;
+    this.clearAids();
     this.drivetrain.reset();
     this.overpassCache.clear();
     this.blobCache.clear();
@@ -395,19 +440,20 @@ export class CarPhysics {
     const absVF = Math.abs(vF);
     const ground = Math.hypot(vF, vL);
     const lock = this.c.steerMax / (1 + ground / this.c.steerSpeedFalloff);
+    this.steerLock = lock;
     const target = MathUtils.clamp(input.steer, -1, 1) * lock;
     const rate = (Math.abs(target) > Math.abs(this.steerCmd) ? this.c.steerRate : this.c.steerReturn) / (1 + ground / 25);
     this.steerCmd += MathUtils.clamp(target - this.steerCmd, -rate * dt, rate * dt);
     // Self-alignment: the front wheels follow the car's direction of travel
     // (fading out at walking pace and in reverse, where it means nothing). Not
     // the front axle's own direction: that includes the yaw rate, and following
-    // it would remove the front tyres' resistance to rotating.
+    // it would remove the front tires' resistance to rotating.
     const align = this.c.steerAlign * MathUtils.smoothstep(vF, 1.5, 5);
     const travel = Math.atan2(vL, Math.max(absVF, 0.1));
     this.steer = MathUtils.clamp(align * travel + this.steerCmd, -this.c.wheelLock, this.c.wheelLock);
     // Traction control while not steering, so a launch doesn't just spin the
     // rear; steer and it lets the wheels spin.
-    this.traction = this.c.tractionControl * (1 - MathUtils.smoothstep(Math.abs(input.steer), 0.1, 0.4));
+    this.traction = this.assists.tc ? this.c.tractionControl * (1 - MathUtils.smoothstep(Math.abs(input.steer), 0.1, 0.4)) : 0;
 
     // Pedals → drive force, brakes. The brake key brakes while moving and
     // selects reverse once nearly stopped; in reverse, the throttle brakes. A
@@ -427,18 +473,25 @@ export class CarPhysics {
     const sliding = this.drifting || this.handbrakeF > 0.3;
     const engine = this.drivetrain.update(dt, this.wheelSpeed, ground, backBrake ? 0 : this.throttleF, reversing, declutch, sliding);
     let drive = engine.drive;
+    // A key or touch button would stamp on the brake (and, without ABS, lock
+    // the wheels) the moment it's pressed: it builds up instead, and lets go at once.
+    const footWant = reversing ? 0 : input.brake;
+    const ease = input.brakeDigital && footWant > this.brakeF;
+    this.brakeF = ease ? Math.min(footWant, this.brakeF + dt / P.brakeRamp) : footWant;
     let brake = backBrake ? input.throttle : 0;
     if (input.brake > 0) {
-      if (!reversing) brake = Math.max(brake, input.brake);
+      if (!reversing) brake = Math.max(brake, this.brakeF);
       else if (!declutch && vF > -this.c.topSpeedReverse) drive -= this.c.mass * this.c.reverseAccel * input.brake;
     }
 
     if (this.airborne) {
       this.yawRate *= Math.exp(-dt * 0.5);
       this.heading += this.yawRate * dt;
-      const t = this.tyre;
+      const t = this.tire;
       t.slideF = t.slideR = 0;
       t.forceF[0] = t.forceF[1] = t.forceR[0] = t.forceR[1] = 0;
+      this.clearAids();
+      this.accelLong = this.accelLat = 0;
     } else {
       const n = P.substeps;
       for (let i = 0; i < n; i++) this.integrateChassis(dt / n, drive, brake, engine);
@@ -485,7 +538,7 @@ export class CarPhysics {
   }
 
   /**
-   * One chassis substep: tyre forces at each axle from their slip, the driven
+   * One chassis substep: tire forces at each axle from their slip, the driven
    * wheels' spin from engine, brakes and road, then the body's motion and
    * rotation. Front-back load transfer follows the recent acceleration.
    */
@@ -506,7 +559,7 @@ export class CarPhysics {
     const transfer = (m * this.accelF * this.c.cgHeight) / this.c.wheelbase;
     const loadF = Math.max(0.15 * m * G, (m * G * b) / this.c.wheelbase - transfer);
     const loadR = Math.max(0.15 * m * G, (m * G * a) / this.c.wheelbase + transfer);
-    const t = this.tyre;
+    const t = this.tire;
     t.loadF = loadF;
     t.loadR = loadR;
 
@@ -521,8 +574,14 @@ export class CarPhysics {
     const gripR = this.c.muRear * loadR;
     const J = engine.inertia;
     const footF = brake * this.c.brakeDecel * this.c.brakeFront * m;
-    const footR = Math.min(brake * this.c.brakeDecel * (1 - this.c.brakeFront) * m, this.c.absLimit * gripR);
+    const abs = this.assists.abs;
+    const footR = Math.min(brake * this.c.brakeDecel * (1 - this.c.brakeFront) * m, abs ? this.c.absLimit * gripR : Infinity);
     const hand = this.handbrakeF * this.c.handbrakeForce * m * G;
+    const footAsked = brake * this.c.brakeDecel * m;
+    let footGiven = 0;
+    const driveAsked = drive;
+    const vx0 = this.vel.x;
+    const vz0 = this.vel.z;
     let fxw: number;
     let fyw: number;
     let rear: AxleForce;
@@ -536,23 +595,25 @@ export class CarPhysics {
       // the grip and spinning up the wheels and engine alongside the car take
       // (or a low gear would launch well short of the grip, and the front's is
       // all the car has), and cuts the drive as they spin past it.
-      const sxF = (this.wheelSpeed - wx) / Math.max(Math.abs(wx), P.tyreMinSpeed) / this.c.peakSlipRatio;
+      const sxF = (this.wheelSpeed - wx) / Math.max(Math.abs(wx), P.tireMinSpeed) / this.c.peakSlipRatio;
       const tcLimit = gripF * (1 + J / m) * (1 - MathUtils.smoothstep(sxF, 0.8, 1.3));
       if (this.traction > 0 && drive > tcLimit) drive -= (drive - tcLimit) * this.traction;
-      if (drive < 0) drive = Math.max(drive, -0.85 * gripF * Math.sqrt(Math.max(0, 1 - (this.tyre.forceF[1] / gripF) ** 2)));
-      const absF = Math.min(footF, this.c.absLimit * gripF);
+      if (drive < 0) drive = Math.max(drive, -0.85 * gripF * Math.sqrt(Math.max(0, 1 - (this.tire.forceF[1] / gripF) ** 2)));
+      const absF = abs ? Math.min(footF, this.c.absLimit * gripF) : footF;
       const ws = this.spinAxle(true, this.wheelSpeed, drive, J, wx, wy, loadF, absF, 0, engine.engineBrake, h);
+      footGiven += this.footApplied;
       this.wheelSpeed = ws;
       this.wheelSpin = Math.max(0, Math.abs(ws) - Math.abs(wx));
-      const front = axleTyre(this.c, true, ws, wx, wy, loadF, _front);
+      const front = axleTire(this.c, true, ws, wx, wy, loadF, _front);
       fxw = front.x;
       fyw = front.y;
       t.slideF = front.sliding ? Math.hypot(ws - wx, wy) : 0;
       // The rear rolls free on the wheels' own inertia; the handbrake locks it.
       const D = this.car.drivetrain;
       this.rollSpeed = this.spinAxle(false, this.rollSpeed, 0, D.wheelInertia / D.wheelRadius ** 2, vF, vyR, loadR, footR, hand, 0, h);
+      footGiven += this.footApplied;
       rearWheel = this.rollSpeed;
-      rear = axleTyre(this.c, false, rearWheel, vF, vyR, loadR, _rear);
+      rear = axleTire(this.c, false, rearWheel, vF, vyR, loadR, _rear);
       // Only the handbrake means the rear is meant to be out (front wheelspin
       // doesn't unsettle it), and then for as long as the slide it started
       // goes on. A slide that grows out of lifting off stays in stability
@@ -561,27 +622,40 @@ export class CarPhysics {
       else this.intent -= h;
     } else {
       // Rear-drive. The fronts only steer and brake.
-      const sy = wy / (Math.max(Math.abs(wx), P.tyreMinSpeed) * Math.tan(this.c.peakSlipAngle));
-      fyw = -Math.sign(sy) * gripF * tyreCurve(Math.abs(sy), this.c.slideFront);
+      const sy = wy / (Math.max(Math.abs(wx), P.tireMinSpeed) * Math.tan(this.c.peakSlipAngle));
+      fyw = -Math.sign(sy) * gripF * tireCurve(Math.abs(sy), this.c.slideFront);
       // ABS: braking only takes the grip cornering leaves (so a braked, steered
       // car still turns), and never reverses the wheel.
-      const brakeRoom = this.c.absLimit * Math.sqrt(Math.max(0, gripF * gripF - fyw * fyw));
-      const brakeF = Math.min(footF, brakeRoom, (Math.abs(wx) * m) / h / 4);
-      fxw = -Math.sign(wx) * brakeF;
-      t.slideF = Math.abs(sy) > 1 ? Math.abs(wy) : 0;
+      const room = Math.sqrt(Math.max(0, gripF * gripF - fyw * fyw));
+      const patch = Math.hypot(wx, wy);
+      if (!abs && footF > room && patch > 1) {
+        // Without ABS, braking past what the cornering leaves locks the
+        // wheels: they slide straight on along the patch's travel, and don't steer.
+        const f = (gripF * this.c.slideFront) / patch;
+        fxw = -wx * f;
+        fyw = -wy * f;
+        footGiven += footF;
+        t.slideF = patch;
+      } else {
+        const brakeF = Math.min(footF, abs ? this.c.absLimit * room : room, (Math.abs(wx) * m) / h / 4);
+        fxw = -Math.sign(wx) * brakeF;
+        footGiven += brakeF;
+        t.slideF = Math.abs(sy) > 1 ? Math.abs(wy) : 0;
+      }
 
       // The rear is driven.
       if (this.traction > 0 && drive > gripR) drive -= (drive - gripR) * this.traction;
       // Reverse has no gearbox to bog it: keep it inside the grip cornering leaves.
-      if (drive < 0) drive = Math.max(drive, -0.85 * gripR * Math.sqrt(Math.max(0, 1 - (this.tyre.forceR[1] / gripR) ** 2)));
+      if (drive < 0) drive = Math.max(drive, -0.85 * gripR * Math.sqrt(Math.max(0, 1 - (this.tire.forceR[1] / gripR) ** 2)));
       const ws = this.spinAxle(false, this.wheelSpeed, drive, J, vF, vyR, loadR, footR, hand, engine.engineBrake, h);
+      footGiven += this.footApplied;
       this.wheelSpeed = rearWheel = ws;
       this.wheelSpin = Math.max(0, Math.abs(ws) - Math.abs(vF));
       // A deliberate slide (handbrake, wheelspin) switches stability control off for a moment.
-      const spinning = ws - vF > Math.max(1.5, 2 * this.c.peakSlipRatio * Math.max(Math.abs(vF), P.tyreMinSpeed));
+      const spinning = ws - vF > Math.max(1.5, 2 * this.c.peakSlipRatio * Math.max(Math.abs(vF), P.tireMinSpeed));
       if (this.handbrakeF > 0.2 || spinning || this.drifting) this.intent = this.c.stabilityOff;
       else this.intent -= h;
-      rear = axleTyre(this.c, false, ws, vF, vyR, loadR, _rear);
+      rear = axleTire(this.c, false, ws, vF, vyR, loadR, _rear);
     }
     const frontLong = fxw * cd - fyw * sd;
     const frontLat = fxw * sd + fyw * cd;
@@ -599,7 +673,7 @@ export class CarPhysics {
     let spin = 0;
     const slipR = Math.abs(t.slipR);
     const allow = this.c.stabilitySlip ?? this.c.peakSlipAngle;
-    if (this.intent <= 0 && slipR > allow && vF > 3) spin -= Math.sign(r) * Math.min(Math.abs(r) / h, this.c.stability * (slipR - allow));
+    if (this.assists.esc && this.intent <= 0 && slipR > allow && vF > 3) spin -= Math.sign(r) * Math.min(Math.abs(r) / h, this.c.stability * (slipR - allow));
     const forceF = frontLong + rear.x;
     const forceL = frontLat + rear.y;
     this.vel.x += ((forceF * fx + forceL * lx) / m) * h;
@@ -615,11 +689,28 @@ export class CarPhysics {
       this.vel.x *= s2;
       this.vel.z *= s2;
     }
+
+    // Diagnostics for the debug tools.
+    const ax = (this.vel.x - vx0) / h;
+    const az = (this.vel.z - vz0) / h;
+    this.accelLong = ax * fx + az * fz;
+    this.accelLat = ax * lx + az * lz;
+    const aids = this.aids;
+    aids.abs = abs && footAsked > 0 ? MathUtils.clamp(1 - footGiven / footAsked, 0, 1) : 0;
+    aids.tc = driveAsked > 0 ? MathUtils.clamp(1 - drive / driveAsked, 0, 1) : 0;
+    aids.stability = spin;
+    aids.rearm = Math.max(0, this.intent);
+  }
+
+  private clearAids(): void {
+    const aids = this.aids;
+    aids.abs = aids.tc = aids.stability = 0;
+    aids.rearm = Math.max(0, this.intent);
   }
 
   /**
    * One axle's wheel speed after a substep. It is integrated implicitly against
-   * the tyre's longitudinal force (linearised), which is stiff next to the
+   * the tire's longitudinal force (linearised), which is stiff next to the
    * wheels' inertia `J` (an equivalent mass at the contact patch). Brakes and
    * engine braking only ever slow the wheels toward a stop. ABS lets the foot
    * brake off while the wheels turn slower than peak slip; the handbrake and
@@ -638,10 +729,11 @@ export class CarPhysics {
     engineBrake: number,
     h: number,
   ): number {
-    const fx0 = axleTyre(this.c, front, ws, vx, vy, load, _probe).x;
-    const k = Math.max(0, (axleTyre(this.c, front, ws + 0.05, vx, vy, load, _probe).x - fx0) / 0.05);
+    const fx0 = axleTire(this.c, front, ws, vx, vy, load, _probe).x;
+    const k = Math.max(0, (axleTire(this.c, front, ws + 0.05, vx, vy, load, _probe).x - fx0) / 0.05);
     ws += (h * (drive - fx0)) / (J + h * k);
-    if (Math.abs(ws) < Math.abs(vx) - this.c.peakSlipRatio * Math.max(Math.abs(vx), P.tyreMinSpeed)) foot = 0;
+    if (this.assists.abs && Math.abs(ws) < Math.abs(vx) - this.c.peakSlipRatio * Math.max(Math.abs(vx), P.tireMinSpeed)) foot = 0;
+    this.footApplied = foot;
     const resist = foot + hand + engineBrake;
     return moveToward(ws, 0, (h * resist) / (J + h * k));
   }
@@ -805,13 +897,15 @@ export class CarPhysics {
   private readonly blobs: Blob[] = [];
   private readonly cornerScratch = [0, 0, 0, 0];
 
-  /** Zeroes everything that turns: wheels, yaw, tyre state, engine (to idle in 1st). */
+  /** Zeroes everything that turns: wheels, yaw, tire state, engine (to idle in 1st). */
   private stopRotating(): void {
     this.wheelSpeed = this.rollSpeed = this.wheelSpin = this.yawRate = this.accelF = 0;
     this.steer = this.steerCmd = 0;
-    const t = this.tyre;
+    const t = this.tire;
     t.slipF = t.slipR = t.slideF = t.slideR = 0;
     t.forceF[0] = t.forceF[1] = t.forceR[0] = t.forceR[1] = 0;
+    this.accelLong = this.accelLat = 0;
+    this.clearAids();
     this.drivetrain.matchSpeed(0);
   }
 
@@ -1632,10 +1726,14 @@ function predictCorner(h: number[], i: number): number {
 }
 
 /**
- * Tyre force as a share of peak for normalised slip `s` (1 = peak): a smooth
+ * Tire force as a share of peak for normalised slip `s` (1 = peak): a smooth
  * rise to the peak, then a fall to `slide` by s = 3.
  */
-function tyreCurve(s: number, slide: number): number {
+/**
+ * Share of peak grip a tire gives at normalised slip `s` (1 = peak slip),
+ * falling to `slide` well past the peak. Exported for the tuning plots.
+ */
+export function tireCurve(s: number, slide: number): number {
   if (s < 1) return s * (2 - s);
   return 1 - (1 - slide) * MathUtils.smoothstep(s, 1, 3);
 }
@@ -1653,14 +1751,14 @@ const _probe: AxleForce = { x: 0, y: 0, sliding: false };
 
 /**
  * Axle force (in the wheels' frame: x along them, y left) under `load` for
- * wheel surface speed `ws` over ground moving at (vx, vy) under the tyre, into
+ * wheel surface speed `ws` over ground moving at (vx, vy) under the tire, into
  * `out`. Longitudinal and lateral slip are normalised by their peaks and
  * combined, and the force points against the combined slip (scaled to an
  * ellipse of muRear forward, muRearSide sideways at the rear; muFront both ways
  * at the front), so wheelspin or a locked wheel leaves little sideways grip.
  */
-function axleTyre(c: ChassisSpec, front: boolean, ws: number, vx: number, vy: number, load: number, out: AxleForce): AxleForce {
-  const ref = Math.max(Math.abs(vx), P.tyreMinSpeed);
+function axleTire(c: ChassisSpec, front: boolean, ws: number, vx: number, vy: number, load: number, out: AxleForce): AxleForce {
+  const ref = Math.max(Math.abs(vx), P.tireMinSpeed);
   const sx = (ws - vx) / ref / c.peakSlipRatio;
   const sy = vy / ref / Math.tan(c.peakSlipAngle);
   const s = Math.hypot(sx, sy);
@@ -1669,7 +1767,7 @@ function axleTyre(c: ChassisSpec, front: boolean, ws: number, vx: number, vy: nu
     out.sliding = false;
     return out;
   }
-  const f = (load * tyreCurve(s, front ? c.slideFront : c.slideRear)) / s;
+  const f = (load * tireCurve(s, front ? c.slideFront : c.slideRear)) / s;
   out.x = (front ? c.muFront : c.muRear) * f * sx;
   out.y = -(front ? c.muFront : c.muRearSide) * f * sy;
   out.sliding = s > 1;

@@ -1,0 +1,40 @@
+/* Live gauges (debug/gauges.ts): right side, under the key hints and above the tach. */
+.dbg-gauges {
+  position: fixed;
+  right: 16px;
+  top: 100px;
+  /* Over the HUD, under the menu and the debug panel. */
+  z-index: 12;
+  pointer-events: none;
+  background: rgba(10, 13, 18, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+.dbg-gauges canvas {
+  display: block;
+}
+/* The aid lamps are switches: invisible buttons over the canvas's lamps. */
+.dbg-gauge-switch {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+}
+.dbg-gauge-switch:hover {
+  outline: 1px solid rgba(255, 255, 255, 0.5);
+}
+.dbg-gauge-switch:focus-visible {
+  outline: 2px solid #40e0ff;
+}
+/* The tach moves to the top right on touch and narrow screens: go under it. */
+@media (pointer: coarse), (max-width: 640px) {
+  .dbg-gauges {
+    top: 200px;
+  }
+}

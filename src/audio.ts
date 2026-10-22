@@ -19,7 +19,7 @@
  * - Transmission: gear whine at the gear-mesh frequency (so it changes with
  *   each gear; reverse's straight-cut gears whine loudest), differential whine
  *   with road speed, and a clunk on every shift.
- * - Tyres: front and rear squeal voices pitched by how fast each axle slides,
+ * - Tires: front and rear squeal voices pitched by how fast each axle slides,
  *   a rasp from wheelspin, rolling road noise and wind with speed.
  */
 
@@ -314,7 +314,7 @@ export class CarAudio {
   private whineGain!: GainNode;
   private diff!: OscillatorNode;
   private diffGain!: GainNode;
-  // Tyres, road, wind
+  // Tires, road, wind
   private rear!: Squeal;
   private front!: Squeal;
   private spinFilter!: BiquadFilterNode;
@@ -398,7 +398,7 @@ export class CarAudio {
     this.diff.connect(this.diffGain).connect(bus);
     this.diff.start();
 
-    // Tyres: a squeal is a few narrow, wandering resonances, part tone, part noise.
+    // Tires: a squeal is a few narrow, wandering resonances, part tone, part noise.
     const squeal = (base: number): Squeal => {
       const gain = gainNode(0);
       const osc = ctx.createOscillator();
@@ -650,7 +650,7 @@ export class CarAudio {
     set(this.diff.frequency, Math.max(1, shaftHz * S.pinionTeeth), 0.03);
     set(this.diffGain.gain, s.engaged && !s.airborne ? S.diffGain * smoothstep(5, 30, s.speed) : 0, 0.08);
 
-    // Tyres sing with the speed they slide at (a standing burnout too), and
+    // Tires sing with the speed they slide at (a standing burnout too), and
     // the pitch rises with it, wandering a little as the rubber stick-slips.
     const ground = s.airborne ? 0 : 1;
     this.wander += dt;

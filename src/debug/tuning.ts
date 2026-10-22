@@ -8,6 +8,7 @@
 
 import { CARS, DEFAULT_CAR, type CarId, type CarSpec } from '../car/cars';
 import { powerHp } from '../car/drivetrain';
+import type { CarPhysics } from '../car/physics';
 import {
   bundle,
   checkNumber,
@@ -32,6 +33,7 @@ import {
   type FieldLimit,
 } from '../car/presets';
 import { MPH } from '../ui';
+import { tuningPlots, type TuningPlot } from './tuningPlots';
 
 export interface TuningHandlers {
   /**
@@ -59,7 +61,7 @@ interface Meta {
   help?: string;
 }
 
-const GROUPS = ['Chassis', 'Tyres', 'Steering', 'Brakes', 'Stability', 'Engine', 'Gearbox', 'Turbo'];
+const GROUPS = ['Chassis', 'Tires', 'Steering', 'Brakes', 'Stability', 'Engine', 'Gearbox', 'Turbo'];
 const DEG = 180 / Math.PI;
 const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th'];
 
@@ -74,34 +76,34 @@ const META: Record<string, Meta> = {
   'chassis.cornerX': { label: 'Probe half-track', group: 'Chassis', unit: 'm', min: 0.5, max: 1.1, step: 0.01, help: 'Ground probes across (≈ contact patches)' },
   'chassis.cornerZ': { label: 'Probe half-base', group: 'Chassis', unit: 'm', min: 0.8, max: 1.9, step: 0.01, help: 'Ground probes along (≈ contact patches)' },
   'chassis.dragK': { label: 'Drag', group: 'Chassis', unit: '/m', min: 0, max: 0.004, step: 0.00001, help: 'Deceleration = this × speed²' },
-  'chassis.rollingDecel': { label: 'Rolling resistance', group: 'Chassis', unit: 'm/s²', min: 0, max: 2, step: 0.01, help: 'Constant deceleration from the tyres rolling' },
+  'chassis.rollingDecel': { label: 'Rolling resistance', group: 'Chassis', unit: 'm/s²', min: 0, max: 2, step: 0.01, help: 'Constant deceleration from the tires rolling' },
   'chassis.topSpeed': { label: 'Top speed (camera)', group: 'Chassis', unit: 'mph', scale: MPH, min: 40, max: 250, step: 1, help: 'Roughly where drag balances power; only scales the camera pull-back' },
   'chassis.topSpeedReverse': { label: 'Reverse top speed', group: 'Chassis', unit: 'mph', scale: MPH, min: 5, max: 60, step: 1, help: 'Backing up on the brake tops out here' },
   'chassis.reverseAccel': { label: 'Reverse accel', group: 'Chassis', unit: 'm/s²', min: 1, max: 15, step: 0.1, help: 'How hard the brake backs the car up from a stop' },
 
-  'chassis.muFront': { label: 'Front grip μ', group: 'Tyres', min: 0.5, max: 2.5, step: 0.01, help: 'Every way: a front-drive car drives and brakes on it too' },
-  'chassis.muRear': { label: 'Rear grip μ (drive)', group: 'Tyres', min: 0.5, max: 2.5, step: 0.01, help: 'Rear drive (rear-drive cars) and braking' },
-  'chassis.muRearSide': { label: 'Rear grip μ (side)', group: 'Tyres', min: 0.5, max: 2.5, step: 0.01, help: 'Rear cornering' },
-  'chassis.peakSlipAngle': { label: 'Peak slip angle', group: 'Tyres', unit: '°', scale: DEG, min: 2, max: 20, step: 0.1, help: 'Sideways slip where cornering grip peaks; past it the tyre slides' },
-  'chassis.peakSlipRatio': { label: 'Peak slip ratio', group: 'Tyres', min: 0.03, max: 0.4, step: 0.005, help: 'Wheelspin or lock (share of road speed) where drive and braking grip peak' },
-  'chassis.slideFront': { label: 'Front sliding grip', group: 'Tyres', unit: '× peak', min: 0.3, max: 1, step: 0.01, help: 'Grip left sliding well past the peak (by 3× peak slip)' },
-  'chassis.slideRear': { label: 'Rear sliding grip', group: 'Tyres', unit: '× peak', min: 0.3, max: 1, step: 0.01, help: 'Grip left sliding well past the peak (by 3× peak slip)' },
+  'chassis.muFront': { label: 'Front grip μ', group: 'Tires', min: 0.5, max: 2.5, step: 0.01, help: 'Every way: a front-drive car drives and brakes on it too' },
+  'chassis.muRear': { label: 'Rear grip μ (drive)', group: 'Tires', min: 0.5, max: 2.5, step: 0.01, help: 'Rear drive (rear-drive cars) and braking' },
+  'chassis.muRearSide': { label: 'Rear grip μ (side)', group: 'Tires', min: 0.5, max: 2.5, step: 0.01, help: 'Rear cornering' },
+  'chassis.peakSlipAngle': { label: 'Peak slip angle', group: 'Tires', unit: '°', scale: DEG, min: 2, max: 20, step: 0.1, help: 'Sideways slip where cornering grip peaks; past it the tire slides' },
+  'chassis.peakSlipRatio': { label: 'Peak slip ratio', group: 'Tires', min: 0.03, max: 0.4, step: 0.005, help: 'Wheelspin or lock (share of road speed) where drive and braking grip peak' },
+  'chassis.slideFront': { label: 'Front sliding grip', group: 'Tires', unit: '× peak', min: 0.3, max: 1, step: 0.01, help: 'Grip left sliding well past the peak (by 3× peak slip)' },
+  'chassis.slideRear': { label: 'Rear sliding grip', group: 'Tires', unit: '× peak', min: 0.3, max: 1, step: 0.01, help: 'Grip left sliding well past the peak (by 3× peak slip)' },
 
   'chassis.steerMax': { label: 'Max steer', group: 'Steering', unit: '°', scale: DEG, min: 10, max: 60, step: 0.5, help: 'Road-wheel angle at rest; it falls off with speed' },
   'chassis.steerSpeedFalloff': { label: 'Speed falloff', group: 'Steering', unit: 'm/s', min: 3, max: 60, step: 0.5, help: 'max = steerMax / (1 + speed / this)' },
   'chassis.steerRate': { label: 'Steer rate', group: 'Steering', unit: '°/s', scale: DEG, min: 50, max: 1000, step: 5, help: 'How fast the wheels turn towards the input (slower at speed)' },
   'chassis.steerReturn': { label: 'Return rate', group: 'Steering', unit: '°/s', scale: DEG, min: 50, max: 1000, step: 5, help: 'How fast the wheels come back towards centre (slower at speed)' },
-  'chassis.steerAlign': { label: 'Self-alignment', group: 'Steering', min: 0, max: 1, step: 0.01, help: '0 none, 1 the front tyres fully trail the direction of travel' },
+  'chassis.steerAlign': { label: 'Self-alignment', group: 'Steering', min: 0, max: 1, step: 0.01, help: '0 none, 1 the front tires fully trail the direction of travel' },
   'chassis.wheelLock': { label: 'Wheel lock', group: 'Steering', unit: '°', scale: DEG, min: 20, max: 80, step: 0.5, help: 'Road-wheel limit, countersteer included' },
 
-  'chassis.brakeDecel': { label: 'Brake decel', group: 'Brakes', unit: 'm/s²', min: 4, max: 30, step: 0.5, help: 'What the foot brake asks for; tyre grip may give less' },
+  'chassis.brakeDecel': { label: 'Brake decel', group: 'Brakes', unit: 'm/s²', min: 4, max: 30, step: 0.5, help: 'What the foot brake asks for; tire grip may give less' },
   'chassis.brakeFront': { label: 'Front brake share', group: 'Brakes', unit: '%', scale: 100, min: 0, max: 100, step: 1, help: 'Share of the foot brake on the front axle' },
   'chassis.absLimit': { label: 'ABS limit', group: 'Brakes', unit: '× grip', min: 0.3, max: 1.2, step: 0.01, help: 'Caps foot-brake force at this share of each axle’s grip' },
   'chassis.handbrakeForce': { label: 'Handbrake', group: 'Brakes', unit: '× weight', min: 0, max: 2, step: 0.01, help: 'Rear brake force at full pull' },
 
   'chassis.stability': { label: 'Stability gain', group: 'Stability', unit: '/s²', min: 0, max: 400, step: 1, help: 'Yaw acceleration per rad of rear slip past its limit' },
   'chassis.stabilityOff': { label: 'Re-arm delay', group: 'Stability', unit: 's', min: 0, max: 5, step: 0.05, help: 'After a handbrake, wheelspin or drift' },
-  'chassis.tractionControl': { label: 'Traction control', group: 'Stability', min: 0, max: 1, step: 0.05, help: '0 none … 1: limits drive to what the driven tyres can take while the wheel is near centre' },
+  'chassis.tractionControl': { label: 'Traction control', group: 'Stability', min: 0, max: 1, step: 0.05, help: '0 none … 1: limits drive to what the driven tires can take while the wheel is near centre' },
   'chassis.stabilitySlip': { label: 'Allowed rear slip', group: 'Stability', unit: '°', scale: DEG, min: 0, max: 45, step: 0.5, help: 'Rear slip it lets the car reach first (default: peak slip angle)' },
 
   'drivetrain.torque': { label: 'Torque curve', group: 'Engine', help: 'rpm → N·m (at full boost, for a turbo engine)' },
@@ -205,10 +207,12 @@ export class TuningEditor {
   private stock: CarPreset;
   private rows: Row[] = [];
   /** Groups the player has open (remembered per browser). */
-  private openGroups = new Set<string>(['Chassis', 'Tyres']);
+  private openGroups = new Set<string>(['Chassis', 'Tires']);
   private nameMode: 'saveAs' | 'rename' = 'saveAs';
   /** Moves the torque plot's live rpm marker (set by the curve row). */
   private liveCurve: ((time: number, rpm: number, torque: number) => void) | null = null;
+  /** The tire, gearing and steering plots, one at the top of each of their groups. */
+  private plots: TuningPlot[] = [];
 
   private readonly select = el('select', 'tun-select');
   private readonly carName = el('span', 'tun-car');
@@ -251,9 +255,13 @@ export class TuningEditor {
     return this.spec;
   }
 
-  /** Each frame the tab is showing: the engine's rpm and the torque on tap there (N·m), for the torque plot. */
-  live(time: number, rpm: number, torque: number): void {
-    this.liveCurve?.(time, rpm, torque);
+  /** Each frame the tab is showing: moves the plots' live markers, in the groups that are open. */
+  live(time: number, physics: CarPhysics): void {
+    if (this.liveCurve && this.openGroups.has('Engine')) {
+      const out = physics.drivetrain.output();
+      this.liveCurve(time, out.rpm, out.torque);
+    }
+    for (const p of this.plots) if (this.openGroups.has(p.group)) p.live(time, physics);
   }
 
   get dirty(): boolean {
@@ -447,7 +455,10 @@ export class TuningEditor {
     this.h.apply(this.spec, path);
     if (commit) this.h.event('tune', { path: path.join('.'), value: clean ?? null });
     if (shape) this.render();
-    else this.refreshMarks();
+    else {
+      this.refreshMarks();
+      this.redrawPlots();
+    }
     return null;
   }
 
@@ -702,6 +713,8 @@ export class TuningEditor {
       }
     };
     for (const s of SECTIONS) walk(tmpl[s] as unknown as Record<string, unknown>, [s]);
+    this.plots = tuningPlots(() => this.spec);
+    for (const p of this.plots) groupFor(p.group).items.push({ order: -1, el: p.el });
 
     const names = [...groups.keys()].sort((a, b) => (GROUPS.indexOf(a) + 1 || 99) - (GROUPS.indexOf(b) + 1 || 99));
     const nodes = names.map((name) => {
@@ -720,11 +733,22 @@ export class TuningEditor {
         if (d.open) this.openGroups.add(name);
         else this.openGroups.delete(name);
         this.persistUi();
+        // An edit while it was closed only marked its plot stale.
+        if (d.open) for (const p of this.plots) if (p.group === name && p.stale) p.draw();
       });
       return d;
     });
     this.form.replaceChildren(...nodes);
     this.refreshMarks();
+    this.redrawPlots();
+  }
+
+  /** Redraws the plots after an edit: now if their group is open, else when it's opened. */
+  private redrawPlots(): void {
+    for (const p of this.plots) {
+      if (this.openGroups.has(p.group)) p.draw();
+      else p.stale = true;
+    }
   }
 
   private refreshPresets(): void {

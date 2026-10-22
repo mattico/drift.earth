@@ -50,7 +50,42 @@ export const FRAME_COLUMNS = [
   'slipF',
   'slipR',
   'yawRate',
+  /** Body acceleration (m/s²; forward +, left +). */
+  'accelLong',
+  'accelLat',
+  /** Axle normal loads (N). */
+  'loadF',
+  'loadR',
+  /** Axle forces on the body (N; x forward, y left). */
+  'forceFx',
+  'forceFy',
+  'forceRx',
+  'forceRy',
+  /** Contact-patch sliding speeds (m/s, 0 while gripping). */
+  'slideF',
+  'slideR',
+  /** Driven wheels running ahead of the road (m/s). */
+  'wheelSpin',
+  /** Pedals after smoothing (0…1). */
+  'throttleF',
+  'handbrakeF',
+  /** The driver's part of the road-wheel angle, and the lock full input asks for at this speed (rad). */
+  'steerCmd',
+  'steerLock',
+  /** Driver aids: ABS and traction control as the share held back (0…1), stability as added yaw accel (rad/s²), re-arm countdown (s). */
+  'abs',
+  'tc',
+  'stability',
+  'rearm',
+  /** Turbo boost (0…1), engine torque on tap (N·m) and drive force at the wheels (N). */
+  'boost',
+  'torque',
+  'driveForce',
+  /** Foot brake the car took (0…1): a key's or touch button's eased in. */
+  'brakeF',
 ] as const;
+
+export type FrameColumn = (typeof FRAME_COLUMNS)[number];
 
 const STRIDE = FRAME_COLUMNS.length;
 const COL = Object.fromEntries(FRAME_COLUMNS.map((c, i) => [c, i])) as Record<(typeof FRAME_COLUMNS)[number], number>;
@@ -148,9 +183,34 @@ export class TraceRecorder {
     b[o + COL.gear] = p.drivetrain.gear + (p.drivetrain.mode === 'manual' ? 10 : 0);
     b[o + COL.wheelSpeed] = p.wheelSpeed;
     b[o + COL.steerAngle] = p.steer;
-    b[o + COL.slipF] = p.tyre.slipF;
-    b[o + COL.slipR] = p.tyre.slipR;
+    b[o + COL.slipF] = p.tire.slipF;
+    b[o + COL.slipR] = p.tire.slipR;
     b[o + COL.yawRate] = p.yawRate;
+    const t = p.tire;
+    b[o + COL.accelLong] = p.accelLong;
+    b[o + COL.accelLat] = p.accelLat;
+    b[o + COL.loadF] = t.loadF;
+    b[o + COL.loadR] = t.loadR;
+    b[o + COL.forceFx] = t.forceF[0];
+    b[o + COL.forceFy] = t.forceF[1];
+    b[o + COL.forceRx] = t.forceR[0];
+    b[o + COL.forceRy] = t.forceR[1];
+    b[o + COL.slideF] = t.slideF;
+    b[o + COL.slideR] = t.slideR;
+    b[o + COL.wheelSpin] = p.wheelSpin;
+    b[o + COL.throttleF] = p.throttleF;
+    b[o + COL.handbrakeF] = p.handbrakeF;
+    b[o + COL.steerCmd] = p.steerCmd;
+    b[o + COL.steerLock] = p.steerLock;
+    b[o + COL.abs] = p.aids.abs;
+    b[o + COL.tc] = p.aids.tc;
+    b[o + COL.stability] = p.aids.stability;
+    b[o + COL.rearm] = p.aids.rearm;
+    const d = p.drivetrain;
+    b[o + COL.boost] = d.boost;
+    b[o + COL.torque] = d.output().torque;
+    b[o + COL.driveForce] = d.force;
+    b[o + COL.brakeF] = p.brakeF;
     this.head = (this.head + 1) % this.capacity;
     if (this.count < this.capacity) this.count++;
   }
@@ -172,6 +232,19 @@ export class TraceRecorder {
   /** Events oldest first. */
   eventList(): TraceEvent[] {
     return [...this.events.slice(this.eventHead), ...this.events.slice(0, this.eventHead)];
+  }
+
+  /** Column index, for `value`. */
+  static column(name: FrameColumn): number {
+    return COL[name];
+  }
+
+  /**
+   * One recorded value without copying: `ago` steps back from the newest (0),
+   * up to `steps − 1`. `col` from `TraceRecorder.column`.
+   */
+  value(col: number, ago = 0): number {
+    return this.buf[((this.head - 1 - ago + 2 * this.capacity) % this.capacity) * STRIDE + col];
   }
 
   /** Most recent frame row as a column → value object (or null before the first step). */

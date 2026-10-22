@@ -1,7 +1,7 @@
 // The hot hatch's body: a low-poly two-box hatchback after a Focus ST. Each
 // panel is a side profile extruded across the car with rounded edges, then
 // bent: nose and tail corners swept back in plan, the cabin leaning in
-// (tumblehome), bonnet and roof crowned, arches flared past the tyres. The
+// (tumblehome), bonnet and roof crowned, arches flared past the tires. The
 // chase camera looks down from behind, so the roof, spoiler, tailgate and rear
 // quarters carry most of the shape.
 
@@ -32,7 +32,7 @@ type P = [number, number];
 /** A width limit at a profile point: x = f(y, z). */
 type XAt = (y: number, z: number) => number;
 
-const TYRE_WIDTH = 0.24;
+const TIRE_WIDTH = 0.24;
 /** Edges this sharp (radians) or sharper stay hard; gentler ones shade smooth. */
 const CREASE = 0.9;
 
@@ -190,16 +190,16 @@ function meshTexture(): CanvasTexture {
 }
 
 /**
- * One road wheel, axle along X with its face on +X: tyre with rounded
+ * One road wheel, axle along X with its face on +X: tire with rounded
  * shoulders, a dark ten-spoke alloy and the brake disc behind it. The caliper
  * comes back separately because it must not spin.
  */
-function hatchWheel(R: number, tyre: Material): { wheel: Group; hub: Group } {
+function hatchWheel(R: number, tire: Material): { wheel: Group; hub: Group } {
   const alloy = new MeshStandardMaterial({ color: 0x2c2f34, metalness: 0.7, roughness: 0.35, side: DoubleSide });
   const disc = new MeshStandardMaterial({ color: 0x8b8e93, metalness: 0.6, roughness: 0.5 });
   const caliper = new MeshStandardMaterial({ color: 0xc8161d, roughness: 0.45 });
-  const h = TYRE_WIDTH / 2;
-  const rim = R * 0.72; // 19-inch rim on a 0.335 m tyre
+  const h = TIRE_WIDTH / 2;
+  const rim = R * 0.72; // 19-inch rim on a 0.335 m tire
   const sec = [
     [rim, h - 0.005],
     [R - 0.03, h],
@@ -208,7 +208,7 @@ function hatchWheel(R: number, tyre: Material): { wheel: Group; hub: Group } {
     [R - 0.03, -h],
     [rim, -h + 0.005],
   ].map(([r, y]) => new Vector2(r, y));
-  const tyreGeom = new LatheGeometry(sec, 12).rotateZ(-Math.PI / 2);
+  const tireGeom = new LatheGeometry(sec, 12).rotateZ(-Math.PI / 2);
 
   // Five pairs of spokes from the hub to the rim, set out toward the face; the
   // barrel shows between them.
@@ -223,9 +223,9 @@ function hatchWheel(R: number, tyre: Material): { wheel: Group; hub: Group } {
     }
   }
   spokes.push(new CylinderGeometry(0.06, 0.07, 0.05, 8).rotateZ(-Math.PI / 2).translate(h - 0.03, 0, 0));
-  spokes.push(new CylinderGeometry(rim - 0.004, rim - 0.004, TYRE_WIDTH - 0.03, 10, 1, true).rotateZ(-Math.PI / 2));
+  spokes.push(new CylinderGeometry(rim - 0.004, rim - 0.004, TIRE_WIDTH - 0.03, 10, 1, true).rotateZ(-Math.PI / 2));
   const wheel = new Group().add(
-    new Mesh(tyreGeom, tyre),
+    new Mesh(tireGeom, tire),
     new Mesh(mergeGeometries(spokes), alloy),
     new Mesh(new CylinderGeometry(rim * 0.8, rim * 0.8, 0.025, 10).rotateZ(-Math.PI / 2).translate(0.005, 0, 0), disc),
   );
@@ -255,8 +255,8 @@ export function hatchBody(k: BodyKit): Body {
   const axles = [-k.wheelZ, k.wheelZ];
   const archR = R + 0.075;
   const sill = 0.19;
-  /** How far the arches stand out: past the tyre's outer wall. */
-  const flareX = Math.max(hw + 0.03, k.wheelX + TYRE_WIDTH / 2 + 0.025);
+  /** How far the arches stand out: past the tire's outer wall. */
+  const flareX = Math.max(hw + 0.03, k.wheelX + TIRE_WIDTH / 2 + 0.025);
 
   const trim = new MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.25, metalness: 0.3 });
   const chrome = new MeshStandardMaterial({ color: 0xd0d3d8, metalness: 0.6, roughness: 0.25, side: DoubleSide });
@@ -444,7 +444,7 @@ export function hatchBody(k: BodyKit): Body {
 
   // ---- Lower body ----
 
-  // Arches: a flare standing out past the tyre at the opening, fading into the
+  // Arches: a flare standing out past the tire at the opening, fading into the
   // side; dark liners hide the paint inside.
   for (const z0 of axles) {
     const ro = archR + 0.16;

@@ -1,11 +1,13 @@
-import { MathUtils, type Matrix4, type Scene, type WebGLRenderer } from 'three';
+import { MathUtils, type Matrix4, type Scene, type Vector3, type WebGLRenderer } from 'three';
 import { PHYSICS } from '../config';
 import type { CarSpec } from '../car/cars';
-import type { CarInput, CarPhysics, OverpassDecision } from '../car/physics';
+import type { Assist, CarInput, CarPhysics, OverpassDecision } from '../car/physics';
 import type { Collider } from '../world/collider';
 import type { World } from '../world/types';
+import { Gauges } from './gauges';
 import { DebugOverlay, type OverlayLayers } from './overlay';
-import { DebugPanel, type PanelTab } from './panel';
+import { DebugPanel, PANEL_TABS, type PanelTab } from './panel';
+import { Scope } from './scope';
 import { redact, TraceRecorder, type Trace, type TraceEvent } from './trace';
 import { TuningEditor } from './tuning';
 
@@ -19,6 +21,8 @@ export interface DebugContext {
   statsText(): string;
   /** The Tuning tab changed the car's numbers (see TuningHandlers.apply). */
   onTuned(spec: CarSpec, path: readonly string[] | null): void;
+  /** Respawns the car at `pos` facing `heading`, rolling at `kmh` (for scripted manoeuvres). */
+  teleport(pos: Vector3, heading: number, kmh: number): void;
 }
 
 interface Saved {
@@ -31,7 +35,17 @@ const STORAGE = 'drift.earth:debug';
 const SAMPLE_EVERY = 0.5;
 export const TIME_SCALES = [1, 0.25, 0.1, 0];
 
-const DEFAULT_LAYERS: OverlayLayers = { wire: true, fill: 'off', photo: true, probes: true, history: true, overpass: true, tyres: true };
+const DEFAULT_LAYERS: OverlayLayers = {
+  wire: true,
+  fill: 'off',
+  photo: true,
+  probes: true,
+  history: true,
+  overpass: true,
+  tires: true,
+  trail: false,
+  gauges: false,
+};
 
 /**
  * Debug panel, collision overlay and the always-on trace recorder. Also the
@@ -43,6 +57,10 @@ export class DebugTools {
   private readonly panel: DebugPanel;
   /** The Tuning tab: the car's live numbers and presets. */
   readonly tuning: TuningEditor;
+  /** Live gauges over the game view. */
+  readonly gauges = new Gauges((aid) => this.setAssist(aid));
+  /** The Scope tab: telemetry graphs, ghosts and scripted manoeuvres. */
+  readonly scope: Scope;
   open = false;
   tab: PanelTab = 'view';
   layers: OverlayLayers = { ...DEFAULT_LAYERS };
@@ -74,6 +92,17 @@ export class DebugTools {
       notice: (text) => this.panel.notice(text),
       event: (kind, data) => this.recorder.event(kind, data),
     });
+    this.scope = new Scope(this.panel.scopeHost, {
+      recorder: this.recorder,
+      physics: ctx.physics,
+      teleport: (pos, heading, kmh) => ctx.teleport(pos, heading, kmh),
+      describe: () => {
+        const d = this.tuning.describe();
+        return `${d.base} · ${d.name}${d.unsaved ? ' (unsaved)' : ''}`;
+      },
+      notice: (text) => this.panel.notice(text),
+      event: (kind, data) => this.recorder.event(kind, data),
+    });
     this.load();
     this.panel.setTab(this.tab);
     this.panel.sync(this.layers, this.timeScale);
@@ -86,6 +115,13 @@ export class DebugTools {
     this.restoreConsole();
     this.overlay.root.removeFromParent();
     this.overlay.dispose();
+    this.gauges.dispose();
+    this.scope.dispose();
+  }
+
+  /** Takes over state the tools before a hot update had beyond layers, tab and tuning (`prev` may be older code). */
+  adopt(prev: DebugTools): void {
+    if (prev.scope) this.scope.adopt(prev.scope);
   }
 
   // --- Scripting surface ----------------------------------------------------
@@ -111,7 +147,7 @@ export class DebugTools {
 
   /**
    * Applies a `?debug=` URL value: a comma list of layers to turn on
-   * (wire, height, slope, nophoto, probes, history, overpass), or empty for the
+   * (wire, height, slope, nophoto, probes, history, overpass, tires, trail, gauges), or empty for the
    * saved defaults.
    */
   applyParam(value: string): void {
@@ -124,7 +160,9 @@ export class DebugTools {
         probes: on.has('probes'),
         history: on.has('history'),
         overpass: on.has('overpass'),
-        tyres: on.has('tyres'),
+        tires: on.has('tires'),
+        trail: on.has('trail'),
+        gauges: on.has('gauges'),
       };
     }
     this.open = true;
@@ -132,7 +170,7 @@ export class DebugTools {
     this.panel.show(true);
   }
 
-  /** Shows the View or Tuning tab. */
+  /** Shows the View, Tuning or Scope tab. */
   setTab(tab: PanelTab): void {
     this.tab = tab;
     this.panel.setTab(tab);
@@ -162,6 +200,16 @@ export class DebugTools {
     const p = this.ctx.physics;
     this.recorder.event('mark', { label, pos: p.pos.toArray(), geo: this.ctx.world()?.geo(p.pos) ?? null });
     this.panel.notice(`Marked “${label}” at ${p.pos.x.toFixed(1)}, ${p.pos.z.toFixed(1)}`);
+  }
+
+  /**
+   * Switches a driver aid on or off (flips it without `on`), e.g.
+   * `setAssist('abs', false)`. The preset's numbers are left alone.
+   */
+  setAssist(aid: Assist, on = !this.ctx.physics.assists[aid]): void {
+    this.ctx.physics.assists[aid] = on;
+    this.recorder.event('assist', { aid, on });
+    this.panel.notice(`${aid.toUpperCase()} ${on ? 'on' : 'off'}`);
   }
 
   log(message: string, data: Record<string, unknown> = {}): void {
@@ -227,9 +275,16 @@ export class DebugTools {
 
   // --- Game hooks -------------------------------------------------------------
 
+  /** Before each physics step: the input to drive it with (a scripted manoeuvre's, or the player's). */
+  input(inp: CarInput): CarInput {
+    return this.scope.input(inp) ?? inp;
+  }
+
   onStep(p: CarPhysics, inp: CarInput, colliders: number): void {
     this.recorder.step(p, inp, colliders);
     this.overlay.onStep(p);
+    this.gauges.onStep(p, inp);
+    this.scope.onStep(p);
   }
 
   onOverpass(d: OverpassDecision): void {
@@ -270,9 +325,10 @@ export class DebugTools {
       );
     }
     if (this.open && this.tab === 'tuning') {
-      const out = p.drivetrain.output();
-      this.tuning.live(time, out.rpm, out.torque);
+      this.tuning.live(time, p);
     }
+    this.gauges.frame(dt, p, this.layers.gauges);
+    this.scope.frame(dt, time, this.open && this.tab === 'scope');
   }
 
   /** Frame timings, for the 2 Hz `sample` events. */
@@ -346,6 +402,7 @@ export class DebugTools {
       preset: this.tuning.describe(),
       layers: this.layers,
       timeScale: this.timeScale,
+      assists: { ...p.assists },
     };
   }
 
@@ -385,7 +442,7 @@ export class DebugTools {
       if (saved) {
         this.open = !!saved.open;
         this.layers = { ...DEFAULT_LAYERS, ...saved.layers };
-        if (saved.tab === 'view' || saved.tab === 'tuning') this.tab = saved.tab;
+        if (saved.tab && PANEL_TABS.includes(saved.tab)) this.tab = saved.tab;
       }
     } catch {
       // Defaults.

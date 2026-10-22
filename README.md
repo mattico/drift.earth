@@ -51,7 +51,7 @@ Link previews (Open Graph and Twitter cards in `index.html`) show `public/og.jpg
 - `bearing` is a compass heading.
 - `top=1` spawns on the highest surface, such as a bridge deck. Without it, the game looks for the lowest flat ground nearby so you don't start on a roof.
 - `h=218.3` spawns on the surface closest to that height (metres above the WGS84 ellipsoid). `mph=55` (or `kmh=90`) starts already moving. Repro links from the debug tools use both.
-- `debug` opens the debug panel; `debug=wire,probes,history` also picks the overlay layers (see below).
+- `debug` opens the debug panel; `debug=wire,probes,history` also picks the overlay layers (`wire`, `height` or `slope`, `nophoto`, `probes`, `history`, `overpass`, `tires`, `trail`, `gauges`; see below).
 - `car=muscle` (or `car=hatch`) drives that car without changing the one picked in the menu.
 
 ## Controls
@@ -83,6 +83,8 @@ Any controller the browser gives the standard mapping works (Xbox, PlayStation, 
 
 On touch devices an on-screen steering pad and GAS, BRAKE and DRIFT buttons appear. Tap AUTO/MANUAL on the gear selector to switch; in manual, ▼▲ buttons appear under it.
 
+The brake key and the touch BRAKE button are on/off, so the brake builds to full over 0.4 s instead of stamping on it: tap to brake lightly. A trigger brakes as far as it's pressed.
+
 ### Cars
 
 Pick a car in the menu (it's remembered). Both have six-speed boxes and the same controls. Their numbers are in `src/car/cars.ts`, and the debug panel's **Tuning** tab edits them live (see below).
@@ -94,9 +96,9 @@ Pick a car in the menu (it's remembered). Both have six-speed boxes and the same
 | Mass | 1,430 kg | 1,250 kg |
 | Gears run out at | 47, 85, 129, 169, 213, 253 mph | 46, 64, 82, 99, 115, 131 mph |
 | Top speed (drag) | about 154 mph | about 115 mph |
-| 0–60 mph | 5.7 s | 4.8 s (spinning the rear tyres) |
+| 0–60 mph | 5.7 s | 4.8 s (spinning the rear tires) |
 
-- **Hot hatch:** after a Focus ST. The turbo builds boost with a little lag, faster high in the rev range, and vents it the moment you lift. It grips hard and understeers on the power: wheelspin and drive both use the front tyres' grip. Traction control holds the front wheels near peak slip while the wheel is centred. Stability control lets the rear reach 15° before it steps in, more gently than the muscle car's.
+- **Hot hatch:** after a Focus ST. The turbo builds boost with a little lag, faster high in the rev range, and vents it the moment you lift. It grips hard and understeers on the power: wheelspin and drive both use the front tires' grip. Traction control holds the front wheels near peak slip while the wheel is centred. Stability control lets the rear reach 15° before it steps in, more gently than the muscle car's.
 - **Muscle car:** no traction control. Floored in 1st it does a rolling burnout; in 2nd it hooks up in a straight line and lets go with moderate steering, so a blip of the handbrake is the easy way in.
 
 **Gearbox:**
@@ -105,16 +107,16 @@ Pick a car in the menu (it's remembered). Both have six-speed boxes and the same
 - **The clutch** slips while pulling away in 1st or reverse; in a higher gear it stays in until the engine would drop below idle.
 - **Engine braking** grows with rpm, so a lower gear slows the car harder.
 
-**Drifting** isn't a mode. The car is a rigid body on two tyres (front and rear axles) with real slip: tyre force rises with slip to a peak and then falls away as the tyre slides. Each axle's tyres share one grip budget between braking or drive and cornering. Front–rear load shifts as the car brakes and accelerates. The driven wheels spin up against the engine's inertia through the gear ratio; the others roll free, or lock under the handbrake. The game calls it a drift whenever the car's slip angle passes 12°, which is what scoring, smoke and the camera react to. Ways to start one:
+**Drifting** isn't a mode. The car is a rigid body on two tires (front and rear axles) with real slip: tire force rises with slip to a peak and then falls away as the tire slides. Each axle's tires share one grip budget between braking or drive and cornering. Front–rear load shifts as the car brakes and accelerates. The driven wheels spin up against the engine's inertia through the gear ratio; the others roll free, or lock under the handbrake. The game calls it a drift whenever the car's slip angle passes 12°, which is what scoring, smoke and the camera react to. Ways to start one:
 - **Handbrake:** locks the rear wheels so they slide instead of gripping. Pull it while turning; tap it to feather. On the muscle car it also dips the clutch, so the engine revs; the hot hatch stays on the power, since its front wheels drive.
-- **Power over (muscle car):** in 1st–3rd, steer in and floor it. The rear tyres spin, lose their sideways grip and step out.
+- **Power over (muscle car):** in 1st–3rd, steer in and floor it. The rear tires spin, lose their sideways grip and step out.
 - **Lift-off or trail braking:** lifting or braking moves weight onto the front, so a car turning near the limit gets loose. The front-heavy hatch does this readily: lift mid-corner and the rear comes round 10–15°.
 
 Once sliding:
 - **Throttle sets the angle.** In the muscle car, more wheelspin means less rear grip and more angle; lifting lets the rear grip and the car straightens. In the hatch it's the other way round: the driven fronts pull the car straight, so stay off the power or feather it to hold the slide, and floor it to come out. Tapping the key feathers it.
 - **Gear matters in the muscle car.** Wheelspin is what keeps the rear sliding, and a high gear can't deliver it. Held at full throttle with a little steering into the slide, a drift holds about 42° in 2nd, 34° in 3rd and 18° in 4th, and straightens in 5th.
 - **Steering is relative to where the car is going.** The front wheels follow the direction of travel by themselves, the way a car's caster pulls them, so a slide countersteers itself. Steering into the slide pulls the nose in and adds angle; steering out takes angle off, or flicks the car into a slide the other way. With the wheel centred and the throttle eased, it straightens up.
-- **The angle bends the line.** A sliding car's tyres turn its path, and big angles scrub speed.
+- **The angle bends the line.** A sliding car's tires turn its path, and big angles scrub speed.
 - **Over-rotate and it spins.** Nothing pushes the car back from a big angle. Full lock and full throttle out of a handbrake turn can spin the muscle car, and holding the handbrake too long at full lock can spin either; countersteer and ease off to catch it.
 
 **Sound** is synthesized as you drive:
@@ -122,7 +124,7 @@ Once sliding:
   - **Muscle car:** a cross-plane V8 with true dual exhausts. Each bank fires at uneven intervals (270°, 180°, 90°, 180°) into its own pipe, which gives the burble and keeps a low body even at 7,000 rpm. Intake roar comes in under load.
   - **Hot hatch:** a turbo four firing evenly every 180° into a single exhaust, with a gruff induction growl under load. A turbo whistle rises with boost, the blow-off valve sighs when you lift at boost, and it pops more eagerly on the overrun.
 - **Transmission:** gear whine at the gear-mesh frequency, which changes with each gear (reverse whines loudest), differential whine with road speed, and a clunk on each shift.
-- **Tyres and road:** front and rear squeal, pitched by how fast each axle slides (a standing burnout squeals too), a rasp from wheelspin, rolling noise and wind with speed, and a thud on landing.
+- **Tires and road:** front and rear squeal, pitched by how fast each axle slides (a standing burnout squeals too), a rasp from wheelspin, rolling noise and wind with speed, and a thud on landing.
 
 Browsers only start audio after a key press or click; a gamepad button doesn't count.
 
@@ -134,27 +136,31 @@ Browsers only start audio after a key press or click; a gamepad button doesn't c
 src/
   main.ts            boot, API key, deep links, menu wiring, hot updates
   hot.ts             dev only: clears the page between hot updates
-  audio.ts           synthesized engine (AudioWorklet), transmission, tyres, road and wind
+  audio.ts           synthesized engine (AudioWorklet), transmission, tires, road and wind
   game.ts            phases (locating → driving ⇄ paused), fly-in spawn, fixed-step loop, rebasing
   camera.ts          top-down chase camera
   input.ts           keyboard, gamepad (with menu navigation) and touch
   minimap.ts         heading-up 2D roadmap in the corner
   config.ts          world, ground, camera and scoring numbers
-  car/cars.ts        the cars: chassis, tyres, steering, brakes, stability, drivetrain
+  car/cars.ts        the cars: chassis, tires, steering, brakes, stability, drivetrain
   car/presets.ts     tuning presets: format, validation, storage
-  car/physics.ts     tyre-force chassis (slip, load transfer, wheelspin; front or rear drive), ground following, wall response
+  car/physics.ts     tire-force chassis (slip, load transfer, wheelspin; front or rear drive), ground following, wall response
   car/drivetrain.ts  torque curve, turbo, gearbox (auto/manual), clutch, rev limiter, engine braking
   car/carModel.ts    procedural low-poly cars (the muscle car's body), see-through ghost, blob shadow
   car/hatchBody.ts   the hot hatch's body and wheels
-  car/effects.ts     skid-mark ribbons and tyre smoke
+  car/effects.ts     skid-mark ribbons and tire smoke
   world/tilesWorld.ts    Google 3D Tiles via 3d-tiles-renderer
   world/practiceWorld.ts offline test track
   world/collider.ts      BVH raycasts (three-mesh-bvh) against nearby tile meshes
   world/mapTiles.ts      2D map tile sessions and Web Mercator, for the minimap
   debug/trace.ts         always-on ring buffer of physics steps and events
-  debug/overlay.ts       collision wireframe, probe rays, contact history
+  debug/overlay.ts       collision wireframe, probe rays, contact history, tire and trail layers
   debug/panel.ts, tools.ts  the F3 panel and the window.__drift.debug API
   debug/tuning.ts        the panel's Tuning tab: live car numbers and presets
+  debug/tuningPlots.ts   the Tuning tab's tire, gearing and steering plots
+  debug/gauges.ts        live gauges over the game view, and the driver-aid switches
+  debug/scope.ts         the panel's Scope tab: telemetry strip charts, ghosts, handling diagram
+  debug/manoeuvres.ts    the Scope tab's scripted test manoeuvres
 tools/
   capture.mjs        headless (GPU) run → trace, screenshots, console, perf trace
   trace-report.mjs   summarises a trace: wall/edge episodes, stops, repro links
@@ -177,7 +183,7 @@ tools/
   - **Inside a tunnel** the car runs on a virtual road. It starts at the road's grade over the last 8–16 m before the portal (not the ground under the car, which can tilt several percent cresting a bump) and keeps its clearance under the cover. For the first 20 m, faces count as the entry curtain if the cover beyond them is at about the portal's clearance. Every 8 m a scan looks up to 220 m ahead for the exit road (walkable, near road height, open above), and the road ramps to meet it, at most 8%. While under the cover, a face ahead counts as the exit curtain if the road resumes within 20 m behind it. Tunnel mode ends once there's nothing overhead, on real ground or the virtual road. There are no side walls in the mesh, so nothing stops a car steering off the tunnel's line.
 - **Detail around the car.** A `LoadRegionPlugin` sphere just ahead of the car keeps the finest level of detail loaded there.
 - **Collision speed.** BVHs are built lazily, closest meshes first, so each ray only tests a few nearby meshes.
-- **Seeing through cover.** The car's ghost is a second copy of it, drawn only where it fails the depth test (something is in front) and only once per pixel. Each pixel goes to the first ghost part drawn there: cabin, roof and stripes first, then the shell (the tyres have none: they dip into the road and would glint through it). The car itself draws after the world and marks its visible pixels in the stencil buffer, so the ghost never shows over the car.
+- **Seeing through cover.** The car's ghost is a second copy of it, drawn only where it fails the depth test (something is in front) and only once per pixel. Each pixel goes to the first ghost part drawn there: cabin, roof and stripes first, then the shell (the tires have none: they dip into the road and would glint through it). The car itself draws after the world and marks its visible pixels in the stencil buffer, so the ghost never shows over the car.
 
 ### Camera distance
 
@@ -198,13 +204,31 @@ The camera pulls back with speed, up to 140 m. The scroll wheel scales the dista
   - the car footprint.
 - **Contacts** leaves a marker wherever the car hit a wall (red) or stopped at an edge (orange ledge, blue drop).
 - **Classifier** shows the overpass and car-blob tests' samples along recent wall hits: skirt samples in yellow, far-side samples in cyan, the deck start as a white cross, and magenta, teal or red for overpass, car blob or wall.
-- **Tyres** draws each axle's tyre force (1 m per kN; green while gripping, orange while sliding), the front wheels' heading (cyan) and the car's velocity (white). The stats under the buttons give the slip angles, axle loads, rear wheel speed and road-wheel angle.
+- **Tires** draws each axle's tire force (1 m per kN; green while gripping, orange while sliding), the front wheels' heading (cyan) and the car's velocity (white). The stats under the buttons give the slip angles, axle loads, rear wheel speed and road-wheel angle. It also shows:
+  - a slip wedge at each axle, from where the wheels point to where the contact patch is travelling: green well under the tire's peak slip angle, amber near it, red past it (the rear one is drawn behind the car, so the body doesn't hide it);
+  - a load bar over each axle against its static load (white tick), showing weight transfer under braking and throttle;
+  - the arc the car is on (radius = speed ÷ yaw rate), with its centre marked within 60 m;
+  - a band round the centre of mass from the body's heading to its velocity, ticked every 10°: the drift angle.
+- **Trail** draws the last 18 s of driving on the ground, each stretch coloured by the first of these that applied: airborne, stability control, ABS, traction control, both axles / rear / front sliding, drifting on gripping tires, or plain grip.
+- **Gauges** puts a live telemetry cluster at the top right, which stays up with the panel closed:
+  - friction circles for each axle: the grip ellipse from μ × load, the force now with a 1 s trail, and the share of grip in use;
+  - a 10 s g-g diagram;
+  - the steering input against the rate-limited command and the actual road-wheel angle over the last 2 s, and the raw pedals beside what the car took from them;
+  - ABS, TC and ESC lamps, stability control's re-arm countdown and a drift light;
+  - the drivetrain: gear, engine rpm against the driven wheels' rpm (the gap is clutch slip), boost, the limiter, drive force and wheelspin.
+
+  **Click the ABS, TC or ESC lamp to switch that aid off** (or on again; `__drift.debug.setAssist('abs', false)` from the console). Off, ABS lets the wheels lock, traction control never cuts drive and stability control never corrects yaw. The preset's numbers stay as they are. The switches last until the page reloads, and traces record them.
 - **Time** runs physics at 1×, ¼× or ⅒×, or freezes it. **Step** advances one 1/120 s step.
 - The legend in the panel lists every colour.
 
 ### Tuning and presets (the panel's **Tuning** tab)
 
-Every number of the car being driven, grouped (chassis, tyres, steering, brakes, stability, engine, gearbox, turbo), with a slider and a number box each. Angles show in degrees and speeds in mph. The gears and the torque curve have their own editors (add or remove a gear or a curve point), and the curve plots torque and power. Changes take effect at once. ● marks values not yet saved; an amber label marks values changed from stock.
+Every number of the car being driven, grouped (chassis, tires, steering, brakes, stability, engine, gearbox, turbo), with a slider and a number box each. Angles show in degrees and speeds in mph. The gears and the torque curve have their own editors (add or remove a gear or a curve point), and the curve plots torque and power. Changes take effect at once. ● marks values not yet saved; an amber label marks values changed from stock.
+
+Three more plots sit at the top of their groups. They use the same formulas as the sim and redraw as you edit:
+- **Tires:** cornering μ against slip angle, front and rear, with drive and braking μ against slip ratio beside it. The live dots are each axle's actual cornering force ÷ load, so a dot below the curve is grip spent on wheelspin or braking.
+- **Gearbox:** the rpm sawtooth the auto box takes at full throttle (shift bands, redline, limiter, and where each upshift drops the revs). Below it is thrust per gear against rolling resistance and drag, marking the real top speed next to the Top speed (camera) field.
+- **Steering:** the lock full input asks for against speed, under the wheel lock, with the road-wheel angle and the driver's part of it live.
 
 - **Presets** belong to a car. Each car has a read-only **Stock** preset and any number of your own: **Save**, **Save as** (also duplicates), **Rename**, **Delete**, **Reset** (back to the last save) and **Stock** (the stock values). The active preset for each car is remembered and loaded when you drive it.
 - **Export** downloads the preset (or all of them) as JSON; **Copy JSON** puts it on the clipboard. **Import** takes a file or pasted JSON. Imports are checked strictly: unknown fields are dropped, every number must be in a sane range, the gears must descend and the torque curve's rpm ascend, and missing fields take the stock values, so older presets keep loading.
@@ -214,11 +238,24 @@ Every number of the car being driven, grouped (chassis, tyres, steering, brakes,
 
 Presets are stored in the browser (`localStorage`); export them to keep or share them.
 
+### Telemetry (the panel's **Scope** tab)
+
+- **Strip charts** of the last 5, 10 or 30 s of the trace. Pick a channel preset (Balance, Steering, Grip, Aids, Drivetrain, Pedals, Forces) or any channels. Values show in display units, with the peak slip angle, stability control's slip allowance and the redline drawn in. Hover to read every channel at that moment; with time frozen, hover to scrub.
+- **Pin** keeps the window as a dashed ghost (up to five), to compare a change in the Tuning tab against the run before it.
+- **Tests** drives scripted manoeuvres: step steer, sine with dwell, J-turn, 0–100 km/h, 100–0 and a ramp steer.
+  - They are timed in physics steps, so slow motion and stepping still work.
+  - On the practice track they start on open ground past the city blocks.
+  - Any player input, a hit or Esc aborts one.
+  - Each run is pinned and lined up on its start beside earlier runs, and its metrics go in a table and the trace.
+  - The ramp steer also feeds the **Handling** view: road-wheel angle against lateral g, with the understeer gradient (°/g).
+- From the console: `__drift.debug.scope.run('step-steer')` resolves to the run's metrics.
+
 ### Traces
 
 The game always records the last 60 s of physics steps:
 - position, velocity, heading and input;
 - engine rpm and gear, rear wheel speed, road-wheel angle, slip angles and yaw rate;
+- tire loads, forces and sliding, body acceleration, the smoothed pedals and steering, what ABS, traction and stability control did, boost, torque and drive force;
 - ground probe states, edge stops, and the wall the solver pushed against (with its hit point, normal and tile error).
 
 It also records events:
@@ -254,7 +291,7 @@ This runs headless Chrome with GPU flags (ANGLE/D3D11), starting a dev server if
 - It drives with the given keys and saves the trace, a screenshot and the page console. `--shots` adds periodic screenshots and `--perf` adds a Chrome performance trace.
 - It then prints the report.
 - `--setup "g.physics.reset(...)"` runs code in the page first; `g` is `window.__drift`.
-- In the console, `__drift.debug` exposes `exportTrace()`, `save()`, `mark()`, `set({ wire: true })`, `setTimeScale()`, `stepOnce()` and `reproLink()`.
+- In the console, `__drift.debug` exposes `exportTrace()`, `save()`, `mark()`, `set({ wire: true })`, `setTimeScale()`, `stepOnce()`, `reproLink()`, `setAssist()`, `tuning` and `scope`.
 - Every real-tile capture is one billable root tileset load.
 
 ### Handling

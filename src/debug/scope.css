@@ -1,0 +1,119 @@
+/* The debug panel's Scope tab (debug/scope.ts). */
+
+/* Strip charts want width: the panel widens while the Scope page shows. */
+.debug-panel:has(> .dbg-page[data-page='scope']:not([hidden])) {
+  width: min(680px, calc(100vw - 32px));
+}
+.scope-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--line);
+}
+.scope-chans {
+  margin: -2px 0 6px 47px;
+  color: var(--muted);
+}
+.scope-chans summary {
+  cursor: pointer;
+  font-size: 11px;
+}
+.scope-chans > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 2px 8px;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.scope-chans label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.scope-chans input {
+  margin: 0;
+}
+.scope-chans i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+.scope-plot {
+  margin-bottom: 6px;
+}
+.scope-plot canvas {
+  display: block;
+  width: 100%;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  cursor: crosshair;
+  touch-action: none;
+}
+.scope-pins {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: -2px 0 6px 47px;
+  font-size: 11px;
+}
+.scope-pin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.scope-pin input {
+  margin: 0;
+}
+.scope-pin > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scope-pin > span:first-of-type {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.scope-meta {
+  flex: none;
+  color: var(--muted);
+}
+.scope-dash {
+  flex: none;
+}
+.scope-pin .scope-x {
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 16px;
+}
+.scope-status {
+  color: var(--muted);
+  font: 11px ui-monospace, Consolas, monospace;
+}
+.scope-metrics table {
+  width: 100%;
+  border-collapse: collapse;
+  font: 11px/1.45 ui-monospace, Consolas, monospace;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.scope-metrics th,
+.scope-metrics td {
+  padding: 2px 8px;
+  text-align: right;
+  white-space: nowrap;
+}
+.scope-metrics th:first-child {
+  text-align: left;
+  font-weight: normal;
+  color: var(--muted);
+}
+.scope-metrics tr:first-child th {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}

@@ -4,14 +4,15 @@ export const PHYSICS = {
   dt: 1 / 120,
   maxSubsteps: 12,
 
-  // Car-specific values (footprint, chassis, tyres, steering, brakes,
+  // Car-specific values (footprint, chassis, tires, steering, brakes,
   // stability control, drivetrain) live in car/cars.ts.
-  // Chassis integration substeps per physics step (tyre forces are stiff).
+  // Chassis integration substeps per physics step (tire forces are stiff).
   substeps: 3,
-  // Below this speed (m/s) slip is measured against it instead, so the tyres
+  // Below this speed (m/s) slip is measured against it instead, so the tires
   // act like stiff dampers when nearly stopped rather than chattering.
-  tyreMinSpeed: 3,
+  tireMinSpeed: 3,
   pedalTau: 0.1, // throttle and handbrake smoothing, so tapping a key feathers
+  brakeRamp: 0.4, // a brake key or touch button takes this long (s) to reach full, so a tap brakes lightly (and, ABS off, doesn't lock the wheels)
 
   // Drift detection, read off the slide for scoring, smoke and the camera.
   driftEnterSpeed: 8,

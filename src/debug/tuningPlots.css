@@ -1,0 +1,134 @@
+/* The Tuning tab's tire, gearing and steering plots (tuningPlots.ts), built on
+   style.css's torque plot classes (.tun-plot, .tun-graph, .tun-layer, .tun-live…). */
+
+.tpl-row .tun-plot-key {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.tpl-row .tun-plot-key + .tun-graph {
+  margin-top: 4px;
+}
+.tun-graph.tpl-graph {
+  height: 112px;
+}
+.tun-graph.tpl-short {
+  height: 96px;
+}
+.tpl-pair {
+  display: flex;
+  gap: 6px;
+}
+.tpl-pair > .tun-graph {
+  flex: 2.2 1 0;
+  min-width: 0;
+}
+.tpl-pair > .tpl-narrow {
+  flex: 1 1 0;
+}
+
+/* Lines and areas. */
+.tpl-grid {
+  stroke: var(--text);
+  stroke-opacity: 0.08;
+  vector-effect: non-scaling-stroke;
+}
+.tun-plot .tpl-f {
+  stroke: var(--accent);
+}
+.tun-plot .tpl-r {
+  stroke: var(--accent-2);
+}
+.tun-plot .tpl-gear {
+  stroke: var(--accent-2);
+  stroke-opacity: 0.4;
+  stroke-width: 1;
+}
+.tun-plot .tpl-gear.tpl-on {
+  stroke-opacity: 1;
+  stroke-width: 2;
+}
+.tun-plot .tpl-saw {
+  stroke: var(--text);
+  stroke-opacity: 0.85;
+  stroke-width: 1.5;
+}
+.tun-plot .tpl-drag {
+  stroke: var(--text);
+  stroke-opacity: 0.8;
+  stroke-dasharray: 4 3;
+}
+.tpl-limiter {
+  stroke: var(--muted);
+  vector-effect: non-scaling-stroke;
+}
+.tpl-top {
+  stroke: var(--good);
+  vector-effect: non-scaling-stroke;
+}
+.tpl-band-up {
+  fill: var(--accent-2);
+  fill-opacity: 0.12;
+}
+.tpl-band-down {
+  fill: var(--text);
+  fill-opacity: 0.07;
+}
+.tpl-env {
+  fill: var(--accent-2);
+  fill-opacity: 0.1;
+}
+.tun-plot .tun-trail.tpl-f,
+.tun-plot .tun-trail.tpl-r {
+  stroke-opacity: 0.55;
+  stroke-width: 1;
+}
+
+/* Labels inside a graph: above and right of their point by default. */
+.tpl-tag {
+  position: absolute;
+  transform: translate(3px, -100%);
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.tpl-tag.tpl-l {
+  transform: translate(calc(-100% - 3px), -100%);
+}
+.tpl-tag.tpl-b {
+  transform: translate(3px, 1px);
+}
+.tpl-tag.tpl-top-tag {
+  color: var(--good);
+}
+
+/* Live markers. */
+.tun-live.tpl-f,
+.tun-live.tpl-r {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--text);
+}
+.tun-live.tpl-f {
+  background: var(--accent);
+}
+.tun-live.tpl-r {
+  background: var(--accent-2);
+}
+.tun-live.tpl-ring {
+  width: 11px;
+  height: 11px;
+  background: none;
+  border: 1.5px solid var(--accent);
+}
+
+.tpl-f-key {
+  color: var(--accent);
+}
+.tpl-r-key {
+  color: var(--accent-2);
+}
+.tpl-top-key {
+  color: var(--good);
+}

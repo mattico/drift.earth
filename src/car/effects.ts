@@ -218,11 +218,11 @@ class Smoke {
 
 export interface WheelSample {
   point: Vector3; // ground contact point, world
-  sliding: number; // 0..1 how hard the tyre is sliding
+  sliding: number; // 0..1 how hard the tire is sliding
 }
 
-/** Skid marks + tyre smoke, one trail per wheel (rear pair, then front). */
-export class TyreEffects {
+/** Skid marks + tire smoke, one trail per wheel (rear pair, then front). */
+export class TireEffects {
   readonly root = new Group();
   private readonly trails: SkidTrail[];
   private readonly smoke = new Smoke();
