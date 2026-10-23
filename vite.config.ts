@@ -113,7 +113,9 @@ export default defineConfig(({ mode }) => ({
   envPrefix: ['VITE_', 'MAPS_'],
   plugins: [traceSink(loadEnv(mode, process.cwd(), '').MAPS_API_KEY), siteUrl(), reloadWorldCode()],
   // Agent worktrees (.claude/worktrees/) are whole checkouts inside the root:
-  // keep the watcher and the dependency scan out of them.
-  server: { watch: { ignored: ['**/traces/**', '**/.claude/worktrees/**'] } },
+  // keep the watcher and the dependency scan out of them. Only the ones under
+  // this root: a server run inside a worktree (its path has .claude/worktrees
+  // in it too) must still see its own edits.
+  server: { watch: { ignored: ['**/traces/**', `${resolve('.claude/worktrees').replace(/\\/g, '/')}/**`] } },
   optimizeDeps: { entries: ['index.html'] },
 }));
