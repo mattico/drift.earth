@@ -680,7 +680,8 @@ const SCENARIOS = [
   },
   {
     name: 'surface-puffs',
-    about: 'rolling straight at 60 km/h: no puffs on asphalt; dust behind the car on the gravel road without any sliding; turf clods from a handbrake slide on the grass',
+    about:
+      'rolling straight at 60 km/h: no puffs on asphalt; dust behind the car on the gravel road without any sliding; grass blades (and no clods) rolling straight across the grass, and turf clods from a handbrake slide on it',
     async run(t) {
       const counts = () => t.page.evaluate(() => window.__drift.effects.counts());
       const clear = () => t.page.evaluate(() => window.__drift.effects.clear());
@@ -701,13 +702,18 @@ const SCENARIOS = [
       await t.spawn(830, 30, EAST, 50);
       await t.until("P.surface.every((s) => s === 'grass')", 2, 'all four wheels on the grass');
       await clear();
+      await t.wait(0.6);
+      const lawn = await counts();
+      check('grass blades rolling straight on grass', lawn.blades, lawn.blades > 10, '> 10');
+      check('turf clods rolling straight on grass', lawn.turf, lawn.turf === 0, '0 (clods are for slides)');
+      await clear();
       await t.down('Space');
       await t.down('KeyA');
       await t.wait(0.8);
       const turf = await counts();
       await t.releaseAll();
       check('turf clods from a handbrake slide on grass', turf.turf, turf.turf > 5, '> 5');
-      t.note = `gravel dust ${road.dust}, grass clods ${turf.turf}`;
+      t.note = `gravel dust ${road.dust}, grass blades ${lawn.blades} rolling, clods ${turf.turf} sliding`;
     },
   },
   {

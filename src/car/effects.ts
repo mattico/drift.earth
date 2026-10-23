@@ -130,9 +130,9 @@ class SkidTrail {
   }
 }
 
-/** What the tires throw up: rubber smoke, dust (stones, sand), turf clods, spray. */
-export type PuffKind = 'smoke' | 'dust' | 'sand' | 'turf' | 'spray';
-const PUFF_KINDS: PuffKind[] = ['smoke', 'dust', 'sand', 'turf', 'spray'];
+/** What the tires throw up: rubber smoke, dust (stones, sand), turf clods, grass blades, spray. */
+export type PuffKind = 'smoke' | 'dust' | 'sand' | 'turf' | 'blades' | 'spray';
+const PUFF_KINDS: PuffKind[] = ['smoke', 'dust', 'sand', 'turf', 'blades', 'spray'];
 
 interface Puff {
   color: [number, number, number];
@@ -160,6 +160,10 @@ const PUFFS: Record<PuffKind, Puff> = {
   sand: { color: [0.84, 0.74, 0.54], alpha: 0.45, size: 1.2, sizeJitter: 0.8, grow: 2.5, life: 1.8, rise: 0.6, riseJitter: 0.8, carry: 0.2, scatter: 1.4, gravity: 1.5, drag: 1.2 },
   // Clods of turf and mud: small, solid, thrown up and falling back.
   turf: { color: [0.25, 0.3, 0.14], alpha: 0.95, size: 0.22, sizeJitter: 0.2, grow: 0, life: 0.9, rise: 2, riseJitter: 1.8, carry: 0.35, scatter: 1.6, gravity: 9.8, drag: 0.5 },
+  // Cut blades flicked up by a rolling tire: small, paler and yellower than
+  // the lawn (or they vanish into it), light enough that the air slows them
+  // and they flutter back down.
+  blades: { color: [0.68, 0.88, 0.32], alpha: 1, size: 0.2, sizeJitter: 0.14, grow: 0, life: 1, rise: 1.6, riseJitter: 1.6, carry: 0.3, scatter: 1.4, gravity: 5, drag: 2.5 },
   spray: { color: [0.86, 0.92, 0.96], alpha: 0.6, size: 0.35, sizeJitter: 0.4, grow: 1.8, life: 0.8, rise: 1.6, riseJitter: 1.6, carry: 0.3, scatter: 1.8, gravity: 9.8, drag: 0.8 },
 };
 
@@ -183,7 +187,8 @@ const puffVertex = /* glsl */ `
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     float t = clamp(aAge / aLife, 0.0, 1.0);
     vColor = vec4(aColor.rgb, (1.0 - t) * aColor.a);
-    gl_PointSize = aSize * (0.6 + aGrow * t) * uScale / -mv.z;
+    // At least a few pixels, so small bits far off don't fade to nothing.
+    gl_PointSize = max(aSize * (0.6 + aGrow * t) * uScale / -mv.z, 3.0);
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -312,14 +317,25 @@ export interface WheelSample {
   trailing: boolean;
 }
 
-/** Puffs a second per wheel just rolling at `speed` (m/s) over a surface, before any sliding. */
-function rollingRate(surface: SurfaceId, speed: number): number {
+/**
+ * Puffs a second a wheel throws up just rolling at `speed` (m/s), before any
+ * sliding. Dust and spray trail from the rear (the fronts' is lost in it);
+ * every tire flicks up grass.
+ */
+function rollingRate(surface: SurfaceId, speed: number, trailing: boolean): number {
+  if (surface === 'grass') return speed > 1.5 ? 6 + speed * 1.6 : 0;
+  if (!trailing) return 0;
   if (LOOSE.has(surface)) return speed > 3 ? 6 + speed * 0.9 : 0;
   if (surface === 'water' || surface === 'ford') return speed > 1 ? 8 + speed * 2.5 : 0;
   return 0;
 }
 
-/** What a wheel throws up on `surface`. */
+/** What a wheel throws up rolling over `surface`: on grass, blades rather than the clods a slide digs out. */
+function rollingPuff(surface: SurfaceId): PuffKind {
+  return surface === 'grass' ? 'blades' : puffOn(surface);
+}
+
+/** What a sliding wheel throws up on `surface`. */
 function puffOn(surface: SurfaceId): PuffKind {
   switch (surface) {
     case 'gravel':
@@ -340,7 +356,8 @@ function puffOn(surface: SurfaceId): PuffKind {
  * Skid marks and what the tires throw up, one trail per wheel (rear pair, then
  * front): rubber smoke and black marks on hard ground; dust, sand, clods or
  * spray and ruts the colour of the ground on soft. Loose ground and water throw
- * some up just rolling, more sliding.
+ * some up just rolling, more sliding; grass flicks up blades rolling and clods
+ * sliding.
  */
 export class TireEffects {
   readonly root = new Group();
@@ -354,7 +371,9 @@ export class TireEffects {
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   });
+  /** Puffs owed to each wheel: from sliding, and from just rolling (on grass a different kind). */
   private puffAcc = [0, 0, 0, 0];
+  private rollAcc = [0, 0, 0, 0];
 
   constructor() {
     this.trails = this.puffAcc.map(() => new SkidTrail(this.skidMat));
@@ -371,17 +390,23 @@ export class TireEffects {
       const mark = MARKS[w.surface];
       if (w.sliding > 0.15 && mark) trail.add(w.point, dir, mark);
       else trail.lift();
-      const rate = (w.sliding > 0.15 ? 45 * w.sliding : 0) + (w.trailing ? rollingRate(w.surface, speed) : 0);
-      if (rate > 0) {
-        this.puffAcc[i] += dt * rate;
-        const kind = puffOn(w.surface);
-        while (this.puffAcc[i] >= 1) {
-          this.puffAcc[i] -= 1;
-          this.puffs.emit(kind, w.point, velocity);
-        }
-      } else this.puffAcc[i] = 0;
+      this.emitAt(this.puffAcc, i, dt, w.sliding > 0.15 ? 45 * w.sliding : 0, puffOn(w.surface), w.point, velocity);
+      this.emitAt(this.rollAcc, i, dt, rollingRate(w.surface, speed, w.trailing), rollingPuff(w.surface), w.point, velocity);
     });
     this.puffs.update(dt);
+  }
+
+  /** Emits `rate` a second of `kind` at `p` for wheel `i`, carrying the fraction over in `acc`. */
+  private emitAt(acc: number[], i: number, dt: number, rate: number, kind: PuffKind, p: Vector3, velocity: Vector3): void {
+    if (rate <= 0) {
+      acc[i] = 0;
+      return;
+    }
+    acc[i] += dt * rate;
+    while (acc[i] >= 1) {
+      acc[i] -= 1;
+      this.puffs.emit(kind, p, velocity);
+    }
   }
 
   /** A burst of `n` sprays around `p`: the car going into deep water. */
@@ -408,6 +433,7 @@ export class TireEffects {
     for (const t of this.trails) t.clear();
     this.puffs.clear();
     this.puffAcc.fill(0);
+    this.rollAcc.fill(0);
   }
 
   applyMatrix(m: Matrix4): void {
