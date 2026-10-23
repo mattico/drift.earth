@@ -109,6 +109,12 @@ export const PHYSICS = {
   tunnelScanEvery: 8,
   tunnelScanRange: 220,
   tunnelMaxLength: 1200,
+  // Temporary collision-only side walls while the tunnel's real shell is missing.
+  ghostTunnelEntryPadding: 8, // extend behind the portal (m)
+  ghostTunnelExitPadding: 12, // extend past the last tracked point (m)
+  ghostTunnelWallHeight: 1.2, // above the virtual road (m)
+  ghostTunnelWidth: 12, // between the two walls (m)
+  ghostTunnelBarrierTolerance: 1.5, // vertical allowance for uneven road sampling (m)
   impactThreshold: 5,
 };
 
