@@ -127,7 +127,7 @@ Once sliding:
   - **Muscle car:** a cross-plane V8 with true dual exhausts. Each bank fires at uneven intervals (270°, 180°, 90°, 180°) into its own pipe, which gives the burble and keeps a low body even at 7,000 rpm. Intake roar comes in under load.
   - **Hot hatch:** a turbo four firing evenly every 180° into a single exhaust, with a gruff induction growl under load. A turbo whistle rises with boost, the blow-off valve sighs when you lift at boost, and it pops more eagerly on the overrun.
 - **Transmission:** gear whine at the gear-mesh frequency, which changes with each gear (reverse whines loudest), differential whine with road speed, and a clunk on each shift.
-- **Tires and road:** front and rear squeal, pitched by how fast each axle slides (a standing burnout squeals too), a rasp from wheelspin, rolling noise with speed, and a thud on landing.
+- **Tires and road:** front and rear squeal, pitched by how fast each axle slides (a standing burnout squeals too), a rasp from wheelspin, rolling noise with speed, and a thud on landing. Tires only squeal on hard ground. Off it, stones crunch on gravel and sand, grass swishes and water washes round the wheels, with speed and more when sliding; soft ground muffles the rolling noise and cobbles turn it into a low drum. Driving into deep water splashes, and the engine drowns as the car goes under.
 - **Wind:** a rush on each side that rises in pitch and swells with speed (about as speed²), with a low buffeting under it. Each side gusts on its own, faster the faster you go; the buffeting under it, below about 300 Hz with its boom around 110 Hz lifted, also flutters several times a second. Sliding sideways, the air meets the body at an angle: the rush grows, the buffeting grows more, and the side the air comes from is louder.
 
 Browsers only start audio after a key press or click; a gamepad button doesn't count.
@@ -150,14 +150,16 @@ Each wheel knows what it's on, and the tires change with it. Every surface scale
 | Cobbles | 0.85× | A little less grip, and a constant shake through the body. |
 | Gravel | 0.63× | Grip peaks later and falls off less past the peak, so slides are slower to start, long and forgiving. Braking takes about 1.45× as far and getting to 62 mph (100 km/h) about 1.6× as long. Bumpy. |
 | Grass | 0.39× | Braking takes twice as far, and the soft ground holds the speed down (about half asphalt's after 20 s flat out). Flat past the peak, like gravel. Bumpier. |
-| Sand | 0.6× | Soft: off the throttle the car stops in about 4 s from 50 mph, and on it the car crawls (9–13 mph). |
-| Water | 0.25× | Next to no grip and heavy wading drag: enough to crawl out at walking pace. |
+| Sand | 0.65× | Soft: off the throttle the car stops in about 5 s from 50 mph, and flat out it labours along at 18–26 mph. |
+| Ford | 0.5× | A road through shallow water: slippery and wading, but the car keeps going across (16–19 mph flat out) and never sinks. |
+| Water | 0.25× | Deep. Three wheels in it for a quarter of a second and the car sinks: the controls let go, the engine drowns, it goes under nose first, and 2.5 s later it's fished out onto the nearest road (or a breadcrumb if there's none). The grip and drag only shape the moment before. |
 
+- **What you see and hear:** a label over the dial names the ground once most wheels have been on it for a quarter of a second (half a second to go back to asphalt, where it hides), so it doesn't flicker along an edge. Sliding tires smoke and leave black marks on hard ground; on gravel and sand they throw up dust and leave ruts the colour of the ground, on grass they throw clods of turf and leave torn marks, and in water they throw spray and leave nothing. Gravel, sand and water throw some up just rolling, too. The sounds are under **Audio** above.
 - When a wheel crosses onto another surface, its axle eases over to it in about 0.1 s, so the boundary doesn't jolt. Traction control, ABS and stability control work to the grip under them.
 - With one side on soft ground, that side drags and slews the car toward it: a little on gravel, hard in sand or water. Running two wheels wide onto the verge takes a correction.
 - A slide counts as a drift (for scoring, smoke and the camera) at the same angle on every surface, so drifting on gravel scores as it does on asphalt.
 - Rough surfaces shake the body with position-fixed bumps of a few centimetres, the same each time you pass. The shake is drawn as it is (not eased like the rest of the body's pitch and roll) and moves the ride height, but not the ground plane the physics leans on. Bumps coming faster than 20 a second fade, as the tires and springs soak them up.
-- On the practice track, the east–west street the car starts on (z = 31) carries on east out of the city as a gravel road, to a gravel oval with an asphalt infield. Around it are a cobbled straight, a sand pit, a grass field and a pond.
+- On the practice track, the east–west street the car starts on (z = 31) carries on east out of the city as a gravel road, across a stream at a ford, to a gravel oval with an asphalt infield. Around it are a cobbled straight, a sand pit, a grass field and a pond. The stream and the pond are deep.
 - In a tunnel the wheels are always on asphalt, whatever the map says of the ground above it (a road tunnel under a river isn't water).
 - The debug panel shows the surface under each wheel (front-left/right, rear-left/right) and each axle's grip; traces record it too.
 - `pnpm handling --surface gravel` runs every scenario on gravel; `pnpm handling --surfaces` compares all of them (see **Handling** below).
@@ -174,10 +176,10 @@ Each wheel knows what it's on, and the tires change with it. Every surface scale
 | Land cover: ice | Asphalt (no ice surface) |
 | Land use: running tracks up to 250 m end to end, then pitches up to 2,500 m² | Asphalt: courts and running tracks are hard. Bigger pitches (football and baseball fields) and racecourses are turf, so grass |
 | Road tunnels, as wide as the road | Asphalt, so the park over a short underpass reads as road |
-| Water: rivers, lakes, ponds, the sea, docks, swimming pools | Water, unless it's intermittent or in a culvert. It covers road tunnels too: a river over a tunnel stays water |
+| Water: rivers, lakes, ponds, the sea, docks, swimming pools | Water (deep), unless it's intermittent or in a culvert. It covers road tunnels too: a river over a tunnel stays water |
 | Bridge outlines (of anything), piers and pedestrian plazas | Asphalt |
 | Footways, cycleways, steps, paths and bridleways, 3 m wide (not indoor corridors) | Asphalt, so a paved path through a lawn isn't lawn; gravel if unpaved, or a path or bridleway not tagged paved |
-| Drivable roads, as wide as their class's carriageway (motorway 14 m, trunk 12, primary 11, secondary 10, tertiary 8, minor 8, service and parking aisles 6, driveways 3.5, tracks 3.5, raceways 10, busways 6); pedestrian streets 8 m (car-free park drives are mapped as these); the decks of every other bridge and pier (footbridges and piers 4 m, rail 6 m). Bridges are drawn 3 m wider | Asphalt, so a deck over water doesn't read as water; gravel if unpaved, or a track not tagged paved (decks without a road are always asphalt) |
+| Drivable roads, as wide as their class's carriageway (motorway 14 m, trunk 12, primary 11, secondary 10, tertiary 8, minor 8, service and parking aisles 6, driveways 3.5, tracks 3.5, raceways 10, busways 6); pedestrian streets 8 m (car-free park drives are mapped as these); the decks of every other bridge and pier (footbridges and piers 4 m, rail 6 m). Bridges are drawn 3 m wider | Asphalt, so a deck over water doesn't read as water; gravel if unpaved, or a track not tagged paved (decks without a road are always asphalt); a ford where a road is tagged as one |
 
 - A paved square inside a park reads grass between its paths unless it's mapped as a pedestrian area (Pershing Square in Los Angeles is only footways).
 - Heights are ignored. Anything over or under a mapped park or pond that isn't drawn as a road or bridge reads as the park or pond: a garage under a roof garden, a rooftop car park over a park, or a deck wider than its road's drawn width.
@@ -201,11 +203,11 @@ src/
   car/cars.ts        the cars: chassis, tires, steering, brakes, stability, drivetrain
   car/presets.ts     tuning presets: format, validation, storage
   car/physics.ts     tire-force chassis (slip, load transfer, wheelspin; front or rear drive), ground following, wall response
-  car/surfaces.ts    what asphalt, cobbles, gravel, grass, sand and water do to the tires
+  car/surfaces.ts    what asphalt, cobbles, gravel, grass, sand, water and fords do to the tires
   car/drivetrain.ts  torque curve, turbo, gearbox (auto/manual), clutch, rev limiter, engine braking
   car/carModel.ts    procedural low-poly cars (the muscle car's body), see-through ghost, blob shadow
   car/hatchBody.ts   the hot hatch's body and wheels
-  car/effects.ts     skid-mark ribbons and tire smoke
+  car/effects.ts     skid-mark ribbons and what the tires throw up (smoke, dust, turf, spray), per surface
   car/streaks.ts     speed streaks peeling off the car
   world/tilesWorld.ts    Google 3D Tiles via 3d-tiles-renderer
   world/practiceWorld.ts offline test track
@@ -260,15 +262,15 @@ The camera pulls back with speed, up to 140 m. The scroll wheel scales the dista
 Each of these prints one line per check and exits non-zero on a failure. Times are for a desktop with a GPU.
 
 ```sh
-pnpm scenarios                              # the game in headless Chrome, practice track (~40 s)
+pnpm scenarios                              # the game in headless Chrome, practice track (~50 s)
 pnpm scenarios reset tab --keep-going       # matching scenarios; carry on past a failure
 pnpm scenarios --real                       # also two at a real location (one billable tile load)
 pnpm handling --surfaces --check            # surface tuning targets, both cars (~1 s)
 pnpm handling --compare $(git merge-base master HEAD)   # every handling scenario, both cars, vs where this branch started (~2 s)
 ```
 
-- **`pnpm scenarios`** starts its own dev server, opens `/?practice` in headless Chrome, drives the car with key presses and asserts on its state and the debug trace's events (`--list` says what each checks). It covers the reset key (a tap goes back to a breadcrumb on release; a 0.5 s hold puts the car on the nearest street centreline, facing along it, while still held: checked on the car itself, not only on the event), the pause menu's **Back to road**, road teleports from a roof and from inside a block, the big map on Tab, the gravel road's grip blending in front axle first, coasting onto grass, sand and the pond, the cobbles' shake, driving out of the pond, and the debug layers. A console error or page error fails the scenario it happened in. A failure saves a screenshot, the page console (with the WebGL renderer) and the trace to `traces/scenarios/`; a page that never starts saves `load.png` and `load.console.log`, and its scenarios are skipped rather than each retried. `--real` adds the I-35W bridge, from one page load: fixed latitudes and longitudes around it must read deck asphalt, river water on both sides of the deck and a bank lawn's grass (so a shifted, mirrored or rotated surface map fails), all four wheels must read asphalt on the deck, and the car dropped onto that lawn must read grass. `--json`, `--headed`, `--chrome PATH` (or `CHROME_PATH`) and `--gl` (or `DRIFT_GL`: the ANGLE backend; the GPU on Windows and macOS, SwiftShader on Linux by default) are there when needed.
-- **`pnpm handling --surfaces --check`** runs `--surfaces` for both cars and checks each surface against asphalt: gravel's lateral grip, braking and 0–100 km/h, and that drifts last longer on it; grass's lateral grip and braking; sand's coast to a stop; cobbles' grip; water's grip, that the car still crawls after 20 s but no faster than a crawl, and that a coast on it stops within a few seconds. The bounds are in `TARGETS` in `tools/handling.mjs`. `--check` alone implies `--surfaces`.
+- **`pnpm scenarios`** starts its own dev server, opens `/?practice` in headless Chrome, drives the car with key presses and asserts on its state and the debug trace's events (`--list` says what each checks). It covers the reset key (a tap goes back to a breadcrumb on release; a 0.5 s hold puts the car on the nearest street centreline, facing along it, while still held: checked on the car itself, not only on the event), the pause menu's **Back to road**, road teleports from a roof and from inside a block, the big map on Tab, the gravel road's grip blending in front axle first, coasting onto grass and sand, the cobbles' shake, sinking in the pond (the splash, the controls letting go, the car drawn going under, and the road teleport out), crossing the ford without sinking, the HUD's surface label (waiting for the surface to hold, hiding on asphalt), dust rolling on gravel but nothing on asphalt and clods from a slide on grass, and the debug layers. A console error or page error fails the scenario it happened in. A failure saves a screenshot, the page console (with the WebGL renderer) and the trace to `traces/scenarios/`; a page that never starts saves `load.png` and `load.console.log`, and its scenarios are skipped rather than each retried. `--real` adds the I-35W bridge, from one page load: fixed latitudes and longitudes around it must read deck asphalt, river water on both sides of the deck and a bank lawn's grass (so a shifted, mirrored or rotated surface map fails), all four wheels must read asphalt on the deck, and the car dropped onto that lawn must read grass. `--json`, `--headed`, `--chrome PATH` (or `CHROME_PATH`) and `--gl` (or `DRIFT_GL`: the ANGLE backend; the GPU on Windows and macOS, SwiftShader on Linux by default) are there when needed.
+- **`pnpm handling --surfaces --check`** runs `--surfaces` for both cars and checks each surface against asphalt: gravel's lateral grip, braking and 0–100 km/h, and that drifts last longer on it; grass's lateral grip and braking; sand's coast to a stop and its speed flat out (hard going, not bogged); cobbles' grip; water's grip, that the car still crawls after 20 s but no faster than a crawl, and that a coast on it stops within a few seconds; a ford's grip, and that the car keeps going across it. The bounds are in `TARGETS` in `tools/handling.mjs`. `--check` alone implies `--surfaces`.
 - **`pnpm handling --compare <ref>`** runs the handling scenarios at that commit and in the working tree, and lists every number that differs. It takes the same options (`--car`, `--all`, `--surface`, `--surfaces`, a filter, `--json`) and runs both cars unless `--car` picks one. Use it after a change that shouldn't move the handling (surfaces, refactors, debug tools): against the commit your branch started from, `--compare $(git merge-base master HEAD)`, it must say `identical`. (Plain `--compare master` compares with master's tip, so tuning merged there since you branched would show up as yours.) After a deliberate tuning change it shows what moved.
 
 CI runs `pnpm handling --surfaces --check` in the build job and the scenarios in a job of its own, so a flaky browser never holds up a deploy; that job uploads the results (timings, the runner's renderer and fps) and any failure's files as the `scenarios` artifact.
@@ -301,7 +303,7 @@ CI runs `pnpm handling --surfaces --check` in the build job and the scenarios in
 
   **Click the ABS, TC or ESC lamp to switch that aid off** (or on again; `__drift.debug.setAssist('abs', false)` from the console). Off, ABS lets the wheels lock, traction control never cuts drive and stability control never corrects yaw. The preset's numbers stay as they are. The switches last until the page reloads, and traces record them.
 - **Roads** draws the OpenStreetMap road centrelines around the car and the spots the last road teleport tried.
-- **Surfaces** drapes what the tires read the ground as over the meshes around the car: grass green, water blue, sand yellow, gravel orange, cobbles red, asphalt faint grey. At real locations it's the OpenStreetMap surface map, so it shows how well OSM lines up with the photogrammetry. `--debug surfaces` turns it on in captures.
+- **Surfaces** drapes what the tires read the ground as over the meshes around the car: grass green, water blue, a ford pale blue, sand yellow, gravel orange, cobbles red, asphalt faint grey. At real locations it's the OpenStreetMap surface map, so it shows how well OSM lines up with the photogrammetry. `--debug surfaces` turns it on in captures.
 - **Time** runs physics at 1×, ¼× or ⅒×, or freezes it. **Step** advances one 1/120 s step.
 - The legend in the panel lists every colour.
 
@@ -384,7 +386,7 @@ This runs headless Chrome with GPU flags (ANGLE on D3D11 or Metal; SwiftShader o
 pnpm handling                  # every scenario, for the default car (the hot hatch)
 pnpm handling --car muscle     # the muscle car
 pnpm handling drift --timeline # matching scenarios, with slip°/yaw°/km/h every 0.25 s
-pnpm handling --surface gravel # every scenario on gravel (or cobbles, grass, sand, water)
+pnpm handling --surface gravel # every scenario on gravel (or cobbles, grass, sand, water, ford)
 pnpm handling --surfaces       # every surface against asphalt
 pnpm handling --surfaces --check  # both cars against the tuning targets (see Checks)
 pnpm handling --compare $(git merge-base master HEAD)  # what this branch changed (see Checks)

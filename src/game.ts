@@ -15,6 +15,7 @@ import { CARS, DEFAULT_CAR, type CarId, type CarSpec } from './car/cars';
 import { TireEffects, type WheelSample } from './car/effects';
 import { SpeedStreaks } from './car/streaks';
 import { CarPhysics, type CarInput } from './car/physics';
+import { DEEP, LOOSE, type SurfaceId } from './car/surfaces';
 import { CAMERA, PHYSICS, SCORING } from './config';
 import { DebugTools } from './debug/tools';
 import { InputManager, type Actions, type InputDevice } from './input';
@@ -35,6 +36,24 @@ interface Crumb {
   pos: Vector3;
   heading: number;
   t: number;
+}
+
+/**
+ * What the wheels (front-left, front-right, rear-left, rear-right) are on, for
+ * the audio: each kind of ground's share of all four, and each axle's share of
+ * hard ground (only there do tires squeal).
+ */
+function groundShares(surface: readonly SurfaceId[]) {
+  const share = (from: number, to: number, pick: (s: SurfaceId) => boolean) => surface.slice(from, to).filter(pick).length / (to - from);
+  const hard = (s: SurfaceId) => s === 'asphalt' || s === 'cobbles';
+  return {
+    loose: share(0, 4, (s) => LOOSE.has(s)),
+    turf: share(0, 4, (s) => s === 'grass'),
+    wet: share(0, 4, (s) => s === 'water' || s === 'ford'),
+    rough: share(0, 4, (s) => s === 'cobbles'),
+    hardF: share(0, 2, hard),
+    hardR: share(2, 4, hard),
+  };
 }
 
 const DOWN = new Vector3(0, -1, 0);
@@ -60,6 +79,20 @@ const HOLD_HINT = 0.15;
 const NOTICE_TIME = 3;
 /** resetToCrumb(n) for R and the auto-reset: crumbs younger than this (s) may be where the trouble started. */
 const CRUMB_AGE = 3;
+/**
+ * Sinking: three wheels in deep water this long (s) and the car goes under,
+ * the engine drowning; it settles `SINK_DEPTH` m down, nose first, and after
+ * `SINK_TIME` s is fished out onto the nearest road.
+ */
+const SINK_AFTER = 0.25;
+const SINK_TIME = 2.5;
+const SINK_DEPTH = 1.4;
+const SINK_PITCH = 0.25;
+/** Hands off the controls while the car sinks. */
+const SUNK_INPUT: CarInput = { throttle: 0, brake: 0, steer: 0, handbrake: false };
+/** The HUD's surface label waits this long (s) before showing a new surface, longer to go back to asphalt: no flicker along an edge. */
+const LABEL_IN = 0.25;
+const LABEL_OUT = 0.5;
 
 /** Exact spawn for deep links and repro links. */
 export interface SpawnOptions {
@@ -112,6 +145,12 @@ export class Game {
   private resetHold = 0;
   /** A short status message (road teleport failures), shown until `until`. */
   private notice = { text: '', until: 0 };
+  /** Seconds with three wheels in deep water, and the sinking under way (seconds since it began). */
+  private deepTime = 0;
+  private sink: { t: number } | null = null;
+  /** The HUD's surface label, and the surface waiting to replace it (for how long). */
+  private shownSurface: SurfaceId = 'asphalt';
+  private nextSurface = { id: 'asphalt' as SurfaceId, t: 0 };
   private spawnPos = new Vector3();
   private spawnHeading = 0;
   private locate = {
@@ -282,6 +321,10 @@ export class Game {
     this.effects.liftAll();
     this.crumbs = [];
     this.notice.until = 0;
+    this.deepTime = 0;
+    this.sink = null;
+    this.shownSurface = 'asphalt';
+    this.nextSurface.t = 0;
     this.takeoff = this.fallGuard = null;
     this.stuckRef.pos.copy(pos);
     this.stuckRef.t = this.time;
@@ -725,7 +768,7 @@ export class Game {
     const forced = this.debug.takeSteps(PHYSICS.maxSubsteps);
     let steps = 0;
     while ((this.acc >= PHYSICS.dt || steps < forced) && steps < PHYSICS.maxSubsteps) {
-      const stepInp = this.debug.input(inp);
+      const stepInp = this.debug.input(this.sink ? SUNK_INPUT : inp);
       P.step(stepInp, PHYSICS.dt, collider);
       this.debug.onStep(P, stepInp, collider.candidateCount);
       // Scraping along a wall doesn't score, and a real hit throws the chain away.
@@ -735,6 +778,7 @@ export class Game {
       steps++;
     }
     if (steps === PHYSICS.maxSubsteps) this.acc = 0;
+    this.updateSink(dt * scale);
     const alpha = this.acc / PHYSICS.dt;
 
     // Rebase before building the render pose so the car, camera and world all
@@ -748,13 +792,14 @@ export class Game {
     const z = MathUtils.lerp(P.prevPos.z, P.pos.z, alpha);
     const heading = P.prevHeading + wrapAngle(P.heading - P.prevHeading) * alpha;
     this.steerShown += (P.steer - this.steerShown) * (1 - Math.exp(-dt / 0.05));
+    const under = this.submerged();
     this.car.update(
       {
         x,
-        y,
+        y: y - SINK_DEPTH * under,
         z,
         heading,
-        pitch: P.pitch,
+        pitch: P.pitch - SINK_PITCH * under,
         roll: P.roll,
         ridePitch: P.ridePitch,
         rideRoll: P.rideRoll,
@@ -789,6 +834,8 @@ export class Game {
         wheelSpin: P.wheelSpin,
         slideF: P.tire.slideF,
         slideR: P.tire.slideR,
+        ...groundShares(P.surface),
+        submerged: under,
         airborne: P.airborne,
         yaw: heading - this.chase.viewYaw,
         travel: (P.speed > 0.5 ? Math.atan2(-P.vel.x, -P.vel.z) : heading) - this.chase.viewYaw,
@@ -800,7 +847,62 @@ export class Game {
     // Frozen or slowed physics must not trip the airborne/stuck timers.
     this.trackCrumbs(dt * scale, inp.throttle);
     this.hud.update(P.speed, this.score.state());
+    this.hud.setSurface(this.surfaceLabel(dt));
     this.hud.setStatus(this.statusText());
+  }
+
+  /**
+   * Three wheels in deep water for a moment and the car goes under (the
+   * controls let go, the engine drowns); a little later it's fished out onto
+   * the nearest road, or a breadcrumb if there's none.
+   */
+  private updateSink(dt: number): void {
+    const P = this.physics;
+    if (this.sink) {
+      this.sink.t += dt;
+      if (this.sink.t >= SINK_TIME) {
+        this.debug.event('sunk', { at: P.pos.toArray() });
+        this.teleportToRoad();
+        this.say('Fished out of the water');
+      }
+      return;
+    }
+    const deep = P.surface.filter((s) => DEEP.has(s)).length;
+    this.deepTime = deep >= 3 && !P.airborne && !P.waiting ? this.deepTime + dt : 0;
+    if (this.deepTime < SINK_AFTER) return;
+    this.sink = { t: 0 };
+    this.debug.event('sink', { at: P.pos.toArray(), speed: P.speed });
+    this.effects.splash(new Vector3(P.pos.x, P.groundY, P.pos.z), P.vel, 40 + Math.min(60, P.speed * 4));
+    this.audio.splash(Math.min(1, 0.3 + P.speed / 15));
+    this.score.crash();
+  }
+
+  /** 0 … 1: how far the sinking car has gone under. */
+  private submerged(): number {
+    return this.sink ? MathUtils.smoothstep(this.sink.t, 0, SINK_TIME * 0.8) : 0;
+  }
+
+  /**
+   * The surface the HUD names: what most wheels are on (a tie goes to the one
+   * that isn't asphalt), shown once it has held for a moment.
+   */
+  private surfaceLabel(dt: number): SurfaceId {
+    const P = this.physics;
+    if (P.airborne) return this.shownSurface;
+    let best: SurfaceId = 'asphalt';
+    let most = 0;
+    for (const s of P.surface) {
+      const n = P.surface.filter((o) => o === s).length;
+      if (n > most || (n === most && best === 'asphalt')) {
+        best = s;
+        most = n;
+      }
+    }
+    const next = this.nextSurface;
+    if (best === this.shownSurface) next.t = 0;
+    else if (best !== next.id) Object.assign(next, { id: best, t: 0 });
+    else if ((next.t += dt) >= (best === 'asphalt' ? LABEL_OUT : LABEL_IN)) this.shownSurface = best;
+    return this.shownSurface;
   }
 
   private updateEffects(dt: number, x: number, z: number, heading: number, handbrake: boolean): void {
@@ -814,12 +916,16 @@ export class Game {
     const front = P.airborne || P.car.drive !== 'fwd' ? 0 : Math.max(0, P.tire.slideF - 4) / 6;
     // On the plane of the road, or on a hill one axle's marks sink under it.
     const n = P.groundNormal;
-    const sample = ([cx, cz]: readonly [number, number], sliding: number): WheelSample => {
+    const sample = ([cx, cz]: readonly [number, number], sliding: number, surface: SurfaceId, trailing: boolean): WheelSample => {
       const ox = cx * cosH + cz * sinH;
       const oz = -cx * sinH + cz * cosH;
-      return { point: new Vector3(x + ox, P.groundY + 0.03 - (n.x * ox + n.z * oz) / n.y, z + oz), sliding: Math.min(1, sliding) };
+      return { point: new Vector3(x + ox, P.groundY + 0.03 - (n.x * ox + n.z * oz) / n.y, z + oz), sliding: Math.min(1, sliding), surface, trailing };
     };
-    const wheels = [...this.car.rearWheels.map((w) => sample(w, rear)), ...this.car.frontWheels.map((w) => sample(w, front))];
+    // Wheel order matches the physics probes': front-left, front-right, rear-left, rear-right.
+    const wheels = [
+      ...this.car.rearWheels.map((w, i) => sample(w, rear, P.surface[2 + i], true)),
+      ...this.car.frontWheels.map((w, i) => sample(w, front, P.surface[i], false)),
+    ];
     const speed = P.speed;
     const dir = speed > 0.1 ? new Vector3(P.vel.x / speed, 0, P.vel.z / speed) : P.forward;
     const cam = this.chase.camera;
@@ -845,7 +951,9 @@ export class Game {
     const last = this.crumbs[this.crumbs.length - 1];
     const moved = !last || Math.hypot(P.pos.x - last.pos.x, P.pos.z - last.pos.z) > 5;
     // Not inside a tunnel either: a reset there would lose the virtual road.
-    if (this.crumbTimer > 1 && moved && !this.fallGuard && !P.airborne && !P.waiting && !P.tunnel && P.groundNormal.y > 0.9) {
+    // Nor in deep water: a reset there would only sink again.
+    const wet = P.surface.some((s) => DEEP.has(s));
+    if (this.crumbTimer > 1 && moved && !this.fallGuard && !P.airborne && !P.waiting && !P.tunnel && !wet && !this.sink && P.groundNormal.y > 0.9) {
       this.crumbTimer = 0;
       this.crumbs.push({ pos: P.pos.clone(), heading: P.heading, t: this.time });
       if (this.crumbs.length > 30) this.crumbs.shift();
@@ -922,6 +1030,8 @@ export class Game {
     this.effects.liftAll();
     this.score.crash();
     this.airTime = 0;
+    this.deepTime = 0;
+    this.sink = null;
     this.takeoff = this.fallGuard = null;
     this.stuckRef.pos.copy(pos);
     this.stuckRef.t = this.time;

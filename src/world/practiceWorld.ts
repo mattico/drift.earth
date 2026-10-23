@@ -41,10 +41,11 @@ type Patch = { surface: SurfaceId } & (
 /**
  * Surface test ground east of the city. A gravel road carries on from the end
  * of the street at z = 31 (the plaza's southern main road) to a gravel oval
- * with an asphalt infield; around it a cobbled straight, a sand pit, a grass
- * field and a pond. They are only paint on the flat plain: surfaceAt() answers
- * from the same shapes. Later patches lie on top. Straight edges stay off
- * the plain's 20 m paint lines, which would show along them.
+ * with an asphalt infield, crossing a stream (deep: a car sinks in it) at a
+ * ford; around it a cobbled straight, a sand pit, a grass field and a pond
+ * (deep too). They are only paint on the flat plain: surfaceAt() answers from
+ * the same shapes. Later patches lie on top. Straight edges stay off the
+ * plain's 20 m paint lines, which would show along them.
  */
 const GRAVEL_ROAD = { surface: 'gravel', kind: 'rect', x0: 452, x1: 612, z0: 27, z1: 35 } as const;
 const OVAL = { surface: 'gravel', kind: 'oval', x: 690, z: 31, half: 40, r: 32, width: 15 } as const;
@@ -55,6 +56,9 @@ const PATCHES: Patch[] = [
   { surface: 'sand', kind: 'ellipse', x: 700, z: 130, rx: 45, rz: 30 },
   { surface: 'grass', kind: 'rect', x0: 805, x1: 955, z0: -15, z1: 75 },
   { surface: 'water', kind: 'ellipse', x: 880, z: 150, rx: 35, rz: 25 },
+  // The stream, then the ford over it: a little wider than the road, so its edges stay shallow.
+  { surface: 'water', kind: 'rect', x0: 556, x1: 564, z0: -25, z1: 95 },
+  { surface: 'ford', kind: 'rect', x0: 556, x1: 564, z0: 25, z1: 37 },
 ];
 
 function inPatch(p: Patch, x: number, z: number): boolean {
@@ -270,7 +274,7 @@ function rampGeometry(width: number, length: number, height: number): BufferGeom
 }
 
 /** Metres one repeat of each patch texture covers. */
-const TEXTURE_METRES: Record<SurfaceId, number> = { asphalt: 40, gravel: 4, grass: 6, sand: 8, cobbles: 2, water: 12 };
+const TEXTURE_METRES: Record<SurfaceId, number> = { asphalt: 40, gravel: 4, grass: 6, sand: 8, cobbles: 2, water: 12, ford: 6 };
 
 /** A tiling texture for a surface patch, like asphaltTexture(): a base colour and random marks. */
 function surfaceTexture(surface: SurfaceId): CanvasTexture {
@@ -328,7 +332,17 @@ function surfaceTexture(surface: SurfaceId): CanvasTexture {
       break;
     }
     case 'water':
-      ctx.fillStyle = '#2d6a86';
+    case 'ford':
+      // A ford: the gravel bed showing through a shallow, lighter sheet of water.
+      if (surface === 'ford') {
+        ctx.fillStyle = '#8f8573';
+        ctx.fillRect(0, 0, 256, 256);
+        dots(3000, () => {
+          const v = 100 + r() * 90;
+          return `rgb(${v + 10},${v},${v - 15})`;
+        });
+        ctx.fillStyle = 'rgba(60,140,170,0.55)';
+      } else ctx.fillStyle = '#2d6a86';
       ctx.fillRect(0, 0, 256, 256);
       ctx.strokeStyle = 'rgba(200,235,255,0.35)';
       ctx.lineWidth = 2;

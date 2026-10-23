@@ -1,5 +1,6 @@
 import { CAR_IDS, CARS, type CarId, type CarSpec, type DrivetrainSpec } from './car/cars';
 import { powerHp, type ShiftMode } from './car/drivetrain';
+import { SURFACE_LABELS, type SurfaceId } from './car/surfaces';
 import type { InputDevice } from './input';
 import { parseCoordinates, SPOTS, type Spot } from './locations';
 import { PlaceSearch } from './places';
@@ -57,6 +58,8 @@ export class Hud {
   private readonly comboAngle = $('combo-angle');
   private readonly speed = $('speed');
   private readonly status = $('status');
+  private readonly surface = $('surface');
+  private lastSurface: SurfaceId = 'asphalt';
   private readonly toastEl = $('toast');
   private readonly attribution = $('attribution-text');
   private readonly logo = $('gmaps-logo');
@@ -198,6 +201,15 @@ export class Hud {
       this.comboMult.textContent = `×${score.multiplier}`;
       this.comboAngle.textContent = `${Math.round(score.angleDeg)}°`;
     }
+  }
+
+  /** Names the ground under the car above the dial; nothing on asphalt. */
+  setSurface(id: SurfaceId): void {
+    if (id === this.lastSurface) return;
+    this.lastSurface = id;
+    this.surface.hidden = !SURFACE_LABELS[id];
+    this.surface.textContent = SURFACE_LABELS[id];
+    this.surface.dataset.surface = id;
   }
 
   setStatus(text: string): void {

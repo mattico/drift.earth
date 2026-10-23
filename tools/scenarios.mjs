@@ -526,7 +526,7 @@ const SCENARIOS = [
   {
     name: 'soft-ground-coasts',
     about:
-      'rolling at 75 km/h off the throttle onto grass, sand and the pond: the first second on each slows the car more than asphalt by a margin (sand and water by far); it comes to a clean stop (grass under the brake) with finite numbers and no airborne step',
+      'rolling at 75 km/h off the throttle onto grass and sand: the first second on each slows the car more than asphalt by a margin (sand by far); it comes to a clean stop (grass under the brake) with finite numbers and no airborne step. (The pond sinks the car: pond-sink.)',
     async run(t) {
       // Physics time runs 3× (more steps a frame); the waits count steps.
       await t.timeScale(3);
@@ -535,7 +535,6 @@ const SCENARIOS = [
         { id: 'asphalt', x: OPEN.x, z: OPEN.z, margin: null },
         { id: 'grass', x: 780, z: 30, margin: 0.5, brake: true },
         { id: 'sand', x: 630, z: 130, margin: 4 },
-        { id: 'water', x: 820, z: 150, margin: 6 },
       ];
       const result = {};
       for (const run of runs) {
@@ -597,24 +596,118 @@ const SCENARIOS = [
     },
   },
   {
-    name: 'water-escape',
-    about: 'from rest 20 m inside the pond, full throttle crawls out within 25 s of physics time, never faster than a crawl (under 15 km/h)',
+    name: 'pond-sink',
+    about:
+      "driving into the pond at 40 km/h with the throttle held: a 'sink' event once three wheels are in, a splash of spray, the controls let go (no throttle reaches the physics) and the car drawn going under; then 'sunk' and a road teleport out of the water, landing grounded and dry, with the HUD saying so",
     async run(t) {
-      await t.timeScale(3);
-      await t.spawn(895, 150, EAST);
-      await t.phys(0.1);
+      await t.spawn(820, 150, EAST, 40);
+      await t.down('KeyW');
+      await t.until("P.surface.filter((s) => s === 'water').length >= 3", 4, 'three wheels in the pond');
+      const sink = await t.until('g.sink !== null', 1, 'the car starting to sink (g.sink)');
+      check('sinking began after three wheels were in (s)', sink, sink >= 0.2 && sink <= 0.4, '0.2–0.4 (SINK_AFTER 0.25)');
+      await t.record();
+      const sinks = await t.events('sink');
+      check("'sink' events", sinks.length, sinks.length === 1, '1');
+      const spray = await t.page.evaluate(() => window.__drift.effects.counts().spray);
+      check('spray puffs right after going in', spray, spray >= 30, '≥ 30 (the splash)');
+      await t.wait(1.5);
+      const under = await t.page.evaluate(() => ({ drawn: window.__drift.car.root.position.y, y: window.__drift.physics.pos.y }));
+      check('car drawn below its physics height after 1.5 s (m)', under.y - under.drawn, under.y - under.drawn > 0.5, '> 0.5 (going under)');
+      const rows = await t.rows();
+      const pushed = rows.filter((r) => r.throttle > 0).length;
+      check('steps with throttle reaching the physics while sinking', pushed, rows.length > 0 && pushed === 0, '0 (W held, the controls let go)');
+      await t.until('g.sink === null', 2.5, 'being fished out (sinking over)');
+      await t.up('KeyW');
+      const sunk = await t.events('sunk', 'road-teleport');
+      check("'sunk' then 'road-teleport' events", sunk.map((e) => e.kind), sunk.length === 2 && sunk[0].kind === 'sunk' && sunk[1].kind === 'road-teleport' && sunk[1].to, "['sunk', 'road-teleport' with a spot]");
+      await t.wait(1);
       const c = await t.car();
-      check('starts in the water (wheels)', c.surface, all(c.surface, 'water'), 'all water');
+      check('airborne after landing', c.airborne, !c.airborne, 'false');
+      check('wheels out of the water after landing', c.surface, c.surface.every((s) => s !== 'water'), 'none on water');
+      near('ground under the car (m)', c.groundY, 0, 0.3);
+      const status = await t.page.evaluate(() => document.getElementById('status').textContent);
+      check('HUD status', status, /water/i.test(status), "mentions the water ('Fished out of the water')");
+      t.note = `sank ${sink.toFixed(2)} s after three wheels went in; out at ${sunk[1].to.map((v) => v.toFixed(0)).join(', ')}`;
+    },
+  },
+  {
+    name: 'ford-crossing',
+    about: 'across the ford on the gravel road at 30 km/h under part throttle: the wheels read ford, throw spray, never sink, and the car comes out the other side still moving',
+    async run(t) {
+      await t.spawn(530, 31, EAST, 30);
       await t.record();
       await t.down('KeyW');
-      const out = await t.until("P.surface.every((s) => s !== 'water')", 25, 'leaving the pond under full throttle');
+      // The rear wheels throw the spray: wait until they're in.
+      await t.until("P.surface[2] === 'ford' && P.surface[3] === 'ford'", 4, 'rear wheels reaching the ford');
+      await t.wait(0.2);
+      const spray = await t.page.evaluate(() => window.__drift.effects.counts().spray);
+      await t.until('P.pos.x > 575', 6, 'out the other side of the ford');
       await t.up('KeyW');
       const rows = await t.rows();
-      sane(rows, 'water escape');
-      const top = Math.max(...rows.filter((r) => r.surf.every((s) => s === 'water')).map((r) => r.speed * 3.6));
-      // 6 km/h when set; without water's drag it passes 25 within the pond.
-      check('top speed in the water (km/h)', top, top < 15, '< 15 (a crawl)');
-      t.note = `out in ${out.toFixed(1)} s, top ${top.toFixed(0)} km/h`;
+      sane(rows, 'ford');
+      const ford = rows.filter((r) => r.surf.some((s) => s === 'ford'));
+      check('steps with a wheel on the ford', ford.length, ford.length > 5, '> 5');
+      check('steps with a wheel in deep water', rows.filter((r) => r.surf.some((s) => s === 'water')).length, rows.every((r) => !r.surf.includes('water')), '0 (the ford covers the road)');
+      const sinks = await t.events('sink');
+      check("'sink' events", sinks.length, sinks.length === 0, '0');
+      check('spray puffs in the ford', spray, spray > 0, '> 0');
+      const slowest = Math.min(...ford.map((r) => r.speed * 3.6));
+      check('slowest speed in the ford (km/h)', slowest, slowest > 10, '> 10 (it keeps going)');
+      t.note = `${ford.length} steps on the ford, slowest ${slowest.toFixed(0)} km/h, ${spray} spray puffs`;
+    },
+  },
+  {
+    name: 'surface-label',
+    about: "the HUD's surface label names the gravel road once the car is on it (after a short delay, not at the first wheel) and hides again back on asphalt",
+    async run(t) {
+      const label = () => t.page.evaluate(() => {
+        const el = document.getElementById('surface');
+        return el.hidden ? '' : el.textContent;
+      });
+      await t.spawn(OPEN.x, OPEN.z, EAST, 30);
+      await t.wait(0.7);
+      check('label on asphalt', await label(), (await label()) === '', "'' (hidden)");
+      await t.spawn(440, 31, EAST, 40);
+      await t.until("P.surface[0] === 'gravel'", 2, 'front wheels reaching the gravel');
+      const early = await label();
+      check('label as the first wheels reach the gravel', early, early === '', "'' (it waits for the surface to hold)");
+      await t.wait(0.6);
+      check('label on the gravel road', await label(), (await label()) === 'Gravel', "'Gravel'");
+      await t.spawn(OPEN.x, OPEN.z, EAST, 30);
+      await t.wait(0.8);
+      check('label back on asphalt', await label(), (await label()) === '', "'' (hidden)");
+    },
+  },
+  {
+    name: 'surface-puffs',
+    about: 'rolling straight at 60 km/h: no puffs on asphalt; dust behind the car on the gravel road without any sliding; turf clods from a handbrake slide on the grass',
+    async run(t) {
+      const counts = () => t.page.evaluate(() => window.__drift.effects.counts());
+      const clear = () => t.page.evaluate(() => window.__drift.effects.clear());
+      await t.spawn(OPEN.x, OPEN.z, EAST, 60);
+      await clear();
+      await t.wait(1);
+      const tar = await counts();
+      const any = Object.values(tar).reduce((a, b) => a + b, 0);
+      check('puffs rolling straight on asphalt', tar, any === 0, 'none');
+      await t.spawn(452, 31, EAST, 60);
+      await clear();
+      await t.wait(1);
+      const road = await counts();
+      const c = await t.car();
+      check('still on the gravel road', c.surface, all(c.surface, 'gravel'), 'all gravel');
+      check('dust puffs rolling on gravel', road.dust, road.dust > 10, '> 10');
+      check('smoke puffs rolling on gravel', road.smoke, road.smoke === 0, '0 (no rubber smoke off the tarmac)');
+      await t.spawn(830, 30, EAST, 50);
+      await t.until("P.surface.every((s) => s === 'grass')", 2, 'all four wheels on the grass');
+      await clear();
+      await t.down('Space');
+      await t.down('KeyA');
+      await t.wait(0.8);
+      const turf = await counts();
+      await t.releaseAll();
+      check('turf clods from a handbrake slide on grass', turf.turf, turf.turf > 5, '> 5');
+      t.note = `gravel dust ${road.dust}, grass clods ${turf.turf}`;
     },
   },
   {

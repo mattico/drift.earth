@@ -237,8 +237,9 @@ export const SURFACE_COLORS: Record<SurfaceId, number> = {
   grass: 0x40d040,
   sand: 0xfff080,
   water: 0x3080ff,
+  ford: 0x60d0e0,
 };
-const SURFACE_ALPHA: Record<SurfaceId, number> = { asphalt: 60, cobbles: 160, gravel: 160, grass: 150, sand: 170, water: 170 };
+const SURFACE_ALPHA: Record<SurfaceId, number> = { asphalt: 60, cobbles: 160, gravel: 160, grass: 150, sand: 170, water: 170, ford: 170 };
 
 /** Main roads bright, minor ones dimmer, bridges violet. */
 export const ROAD_COLORS: Record<RoadClass | 'bridge', number> = {

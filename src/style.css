@@ -216,6 +216,52 @@ input {
   align-items: flex-end;
   gap: 10px;
 }
+/* The ground under the car, centred over the dial (half its width in from the
+   right): hidden on asphalt. Below it where the cluster sits at the top. */
+.surface-tag {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 86px;
+  transform: translateX(50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.surface-tag[hidden] {
+  display: none;
+}
+.surface-tag::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--surface, #fff);
+}
+.surface-tag[data-surface='cobbles'] {
+  --surface: #c87a5a;
+}
+.surface-tag[data-surface='gravel'] {
+  --surface: #d9a650;
+}
+.surface-tag[data-surface='grass'] {
+  --surface: #6cc44a;
+}
+.surface-tag[data-surface='sand'] {
+  --surface: #f0dc8c;
+}
+.surface-tag[data-surface='water'],
+.surface-tag[data-surface='ford'] {
+  --surface: #5aa8ff;
+}
 .tach {
   position: relative;
   width: 172px;
@@ -1265,6 +1311,10 @@ body.gamepad .suggestions li:focus {
     right: 16px;
     align-items: flex-start;
   }
+  .surface-tag {
+    bottom: auto;
+    top: calc(100% + 8px);
+  }
   .gearbox.manual .gb-shift {
     display: flex;
     flex-direction: column;
@@ -1294,6 +1344,11 @@ body.gamepad .suggestions li:focus {
   .tach {
     width: 124px;
     height: 124px;
+  }
+  .surface-tag {
+    bottom: auto;
+    top: calc(100% + 8px);
+    right: 62px;
   }
   .tach-gear {
     font-size: 24px;

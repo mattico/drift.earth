@@ -157,8 +157,8 @@ const count = (cells, v = 1) => cells.reduce((n, c) => n + (c === v ? 1 : 0), 0)
 // running track around a turf pitch listed before it; a lake over the middle
 // with a paved road, a footbridge, a footbridge outline, a pier and a
 // pedestrian plaza; a dry pond; an unpaved track that a paved road crosses; a
-// pedestrian street through the park; a culverted stream; and a road tunnel
-// under the park and the lake.
+// pedestrian street through the park; a culverted stream; a road tunnel under
+// the park and the lake; and a road fording the lake.
 {
   const n = 512;
   const tile = mockTile({
@@ -195,6 +195,7 @@ const count = (cells, v = 1) => cells.reduce((n, c) => n + (c === v ? 1 : 0), 0)
       feature(2, { class: 'path', subclass: 'footway', brunnel: 'bridge' }, [[[1804, 900], [1804, 2100]]]),
       feature(2, { class: 'pier' }, [[[2500, 1804], [3000, 1804]]]),
       feature(2, { class: 'path', subclass: 'pedestrian' }, [[[100, 2804], [900, 2804]]]),
+      feature(2, { class: 'minor', brunnel: 'ford' }, [[[2900, 1100], [2900, 1400]]]),
     ],
   });
   const cells = rasterise(tile, 14, 8192, n);
@@ -227,6 +228,8 @@ const count = (cells, v = 1) => cells.reduce((n, c) => n + (c === v ? 1 : 0), 0)
     [1500, 948, 'asphalt'],
     [1500, 1200, 'water'],
     [2000, 1200, 'water'],
+    [2900, 1250, 'ford'],
+    [2860, 1250, 'water'],
   ];
   const bad = want.filter(([x, y, s]) => at(x, y) !== s).map(([x, y, s]) => `(${x}, ${y}) ${at(x, y)}, want ${s}`);
   check('priority order', bad.length === 0, bad.join('; '));

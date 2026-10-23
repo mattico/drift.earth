@@ -5,7 +5,8 @@
 // tire-on-surface friction and rolling-resistance figures, then tuned for feel
 // with `pnpm handling --surfaces`.
 
-export type SurfaceId = 'asphalt' | 'cobbles' | 'gravel' | 'grass' | 'sand' | 'water';
+// The order is the codes in OSM surface grids and the trace: append new ones.
+export type SurfaceId = 'asphalt' | 'cobbles' | 'gravel' | 'grass' | 'sand' | 'water' | 'ford';
 
 export interface Surface {
   /** × the car's μ (front, rear, rear sideways). */
@@ -41,12 +42,33 @@ export const SURFACES: Record<SurfaceId, Surface> = {
   // Turf: μ ≈ 0.4, so braking takes twice as far; soft enough to hold the
   // speed down; flat past the peak, or a rear-drive car on the power just spins.
   grass: { grip: 0.39, peakSlip: 1.8, slideLift: 0.85, rolling: 0.2, drag: 0.03, bump: 0.06, bumpLength: 2.5 },
-  // Soft sand bogs a road car down: Crr ≈ 0.15 and more the faster it goes,
-  // so it stops in about 4 s from 80 km/h off the throttle and crawls on it.
-  sand: { grip: 0.6, peakSlip: 2, slideLift: 0.85, rolling: 1.2, drag: 0.55, bump: 0.04, bumpLength: 3 },
-  // Shallow water: next to no grip and heavy wading drag, but the tires still
-  // find enough of the bed to crawl out at walking pace (sinking is for later).
+  // Soft sand drags a road car down: Crr ≈ 0.15 and more the faster it goes,
+  // so it stops in about 5 s from 80 km/h off the throttle, and flat out it
+  // labours along at about 30 km/h (the hatch) rather than bogging.
+  sand: { grip: 0.65, peakSlip: 2, slideLift: 0.85, rolling: 1.3, drag: 0.3, bump: 0.04, bumpLength: 3 },
+  // Deep water: next to no grip and heavy wading drag. Three wheels in it and
+  // the car sinks (Game), so these only shape the moment before; a car that
+  // gets out first can still crawl.
   water: { grip: 0.25, peakSlip: 1, slideLift: 0.5, rolling: 0.1, drag: 0.7, bump: 0, bumpLength: 1 },
+  // A ford: a road through shallow water. Slippery and wading, but a car keeps
+  // going across at a walking-to-jogging pace and never sinks. Flat past the
+  // peak, like grass, or a rear-drive car on the power just spins.
+  ford: { grip: 0.5, peakSlip: 1.5, slideLift: 0.8, rolling: 0.4, drag: 0.35, bump: 0.02, bumpLength: 0.8 },
+};
+
+/** Surfaces a car sinks in: three wheels on them and it's under. */
+export const DEEP: ReadonlySet<SurfaceId> = new Set(['water']);
+/** Loose ground the tires throw up and dig into: dust, ruts, the crunch of stones. */
+export const LOOSE: ReadonlySet<SurfaceId> = new Set(['gravel', 'sand']);
+/** Shown by the HUD's surface label: every surface but asphalt, what each is called there. */
+export const SURFACE_LABELS: Record<SurfaceId, string> = {
+  asphalt: '',
+  cobbles: 'Cobbles',
+  gravel: 'Gravel',
+  grass: 'Grass',
+  sand: 'Sand',
+  water: 'Water',
+  ford: 'Ford',
 };
 
 export const SURFACE_IDS = Object.keys(SURFACES) as SurfaceId[];

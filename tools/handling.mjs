@@ -7,7 +7,7 @@
 //
 //   filter       only scenarios whose name contains this text
 //   --car        which car (default: the game's default)
-//   --surface    the ground: asphalt (default), cobbles, gravel, grass, sand, water
+//   --surface    the ground: asphalt (default), cobbles, gravel, grass, sand, water, ford
 //   --surfaces   compare every surface on the key numbers instead (grip, braking,
 //                launch, speed, coasting, drifts), each also as × asphalt
 //   --check      implies --surfaces: both cars (or --car's) against the tuning
@@ -291,16 +291,21 @@ const TARGETS = {
     { surface: 'gravel', key: 'hold', x: true, above: 1 },
     { surface: 'grass', key: 'latG', x: true, lo: 0.4, hi: 0.5 },
     { surface: 'grass', key: 'brakeM', x: true, lo: 2, hi: 2.5 },
-    // "About 4 s" from 80 km/h: 3.9 s when set.
-    { surface: 'sand', key: 'coastS', hi: 4.2 },
+    // Hard going but not bogged: 80 km/h to a stop in about 5 s off the
+    // throttle (5.3 s when set), about 30 km/h flat out (29 when set).
+    { surface: 'sand', key: 'coastS', lo: 4.5, hi: 5.5 },
+    { surface: 'sand', key: 'kmh20s', lo: 25, hi: 35 },
     { surface: 'cobbles', key: 'latG', x: true, below: 1 },
     { surface: 'water', key: 'latG', x: true, below: 0.25 },
-    // Still moving after 20 s flat out: it can crawl out of a pond.
+    // Still moving after 20 s flat out: a car that gets out before it sinks can crawl.
     { surface: 'water', key: 'kmh20s', above: 0 },
     // But only crawl (6.5 when set), and a coast stops within a few seconds
     // (4.7 s when set): water's drag and rolling resistance are doing their job.
     { surface: 'water', key: 'kmh20s', below: 15 },
     { surface: 'water', key: 'coastS', hi: 5.5 },
+    // A ford: slippery and slow, but a car keeps going across it.
+    { surface: 'ford', key: 'latG', x: true, lo: 0.4, hi: 0.6 },
+    { surface: 'ford', key: 'kmh20s', lo: 20, hi: 60 },
   ],
   muscle: [
     // ×0.70 when set: on the hatch's upper edge.
@@ -314,14 +319,17 @@ const TARGETS = {
     { surface: 'grass', key: 'latG', x: true, lo: 0.37, hi: 0.5 },
     // ×2.03 when set: near the hatch's 2.0 floor.
     { surface: 'grass', key: 'brakeM', x: true, lo: 1.9, hi: 2.5 },
-    // 3.8 s when set.
-    { surface: 'sand', key: 'coastS', hi: 4.2 },
+    // 5.2 s and 42 km/h when set: more power, so faster through it than the hatch.
+    { surface: 'sand', key: 'coastS', lo: 4.5, hi: 5.5 },
+    { surface: 'sand', key: 'kmh20s', lo: 25, hi: 50 },
     { surface: 'cobbles', key: 'latG', x: true, below: 1 },
     { surface: 'water', key: 'latG', x: true, below: 0.25 },
     { surface: 'water', key: 'kmh20s', above: 0 },
     // 6.0 km/h and 4.6 s when set.
     { surface: 'water', key: 'kmh20s', below: 15 },
     { surface: 'water', key: 'coastS', hi: 5.5 },
+    { surface: 'ford', key: 'latG', x: true, lo: 0.4, hi: 0.6 },
+    { surface: 'ford', key: 'kmh20s', lo: 20, hi: 70 },
   ],
 };
 const METRICS = {

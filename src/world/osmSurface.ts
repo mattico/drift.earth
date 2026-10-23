@@ -297,7 +297,7 @@ export function* rasterSteps(tile: TileLayers, z: number, ty: number, n = GRID):
     for (const f of features(tile, 'transportation')) {
       const style = f.type === 2 ? lineStyle(f.properties) : null;
       if (style && style.unpaved === unpaved) {
-        const code = unpaved ? SURFACE_CODE.gravel : SURFACE_CODE.asphalt;
+        const code = style.ford ? SURFACE_CODE.ford : unpaved ? SURFACE_CODE.gravel : SURFACE_CODE.asphalt;
         for (const line of cellsOf(f, n)) {
           paint.line(line, style.width / 2 / cellMetres, code);
           yield;
@@ -317,17 +317,18 @@ function landcoverSurface(p: Record<string, unknown>): SurfaceId {
 }
 
 /**
- * How a transportation line is drawn (width in m, gravel or not), or null if
- * it isn't: tunnels are drawn before the water, and indoor corridors not at
- * all. Any bridge or pier is a hard deck over the water, whatever runs on it.
+ * How a transportation line is drawn (width in m, gravel or not, a ford), or
+ * null if it isn't: tunnels are drawn before the water, and indoor corridors
+ * not at all. Any bridge or pier is a hard deck over the water, whatever runs
+ * on it; a road through a ford is shallow water over the river, not road.
  */
-function lineStyle(p: Record<string, unknown>): { width: number; unpaved: boolean } | null {
+function lineStyle(p: Record<string, unknown>): { width: number; unpaved: boolean; ford?: boolean } | null {
   const bridge = p.brunnel === 'bridge';
   const extra = bridge ? BRIDGE_EXTRA : 0;
   const cls = drivableClass(p);
   if (cls) {
     const service = typeof p.service === 'string' && Object.hasOwn(SERVICE_WIDTH, p.service) ? SERVICE_WIDTH[p.service] : null;
-    return { width: (service ?? ROAD_WIDTH[cls]) + extra, unpaved: isUnpaved(p) };
+    return { width: (service ?? ROAD_WIDTH[cls]) + extra, unpaved: isUnpaved(p), ford: p.brunnel === 'ford' };
   }
   if (p.brunnel === 'tunnel') return null;
   if (p.subclass === 'pedestrian') return { width: PEDESTRIAN_WIDTH + extra, unpaved: isUnpaved(p) && !bridge };

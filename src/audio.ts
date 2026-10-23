@@ -19,8 +19,11 @@
  * - Transmission: gear whine at the gear-mesh frequency (so it changes with
  *   each gear; reverse's straight-cut gears whine loudest), differential whine
  *   with road speed, and a clunk on every shift.
- * - Tires: front and rear squeal voices pitched by how fast each axle slides,
- *   a rasp from wheelspin and rolling road noise with speed.
+ * - Tires: front and rear squeal voices pitched by how fast each axle slides
+ *   (on hard ground only), a rasp from wheelspin and rolling road noise with
+ *   speed (muffled on soft ground, a drum on cobbles). Off the tarmac, stones
+ *   crunch, grass swishes and water washes round the wheels, with speed and
+ *   more when sliding; driving into deep water splashes and the engine drowns.
  * - Wind: a rush either side that rises in pitch and swells with speed,
  *   gusting on its own each side, with a low buffeting under it. Sliding
  *   sideways, it blows harder and from the side the air comes from.
@@ -55,6 +58,16 @@ export interface AudioState {
   /** Sliding speed at the front and rear contact patches (m/s). */
   slideF: number;
   slideR: number;
+  /** Share of the four wheels on loose stones or sand, grass, water (deep or a ford) and cobbles, 0–1. */
+  loose: number;
+  turf: number;
+  wet: number;
+  rough: number;
+  /** Share of each axle's wheels on hard ground: only there do tires squeal. */
+  hardF: number;
+  hardR: number;
+  /** 0–1: how far under water the car has sunk. The engine drowns. */
+  submerged: number;
   airborne: boolean;
   /** The car's heading relative to the camera's view (rad, left +): which way it faces the listener. */
   yaw: number;
@@ -375,6 +388,15 @@ export class CarAudio {
   private spinGain!: GainNode;
   private roadFilter!: BiquadFilterNode;
   private roadGain!: GainNode;
+  // Off the tarmac: stones crunching, grass swishing, water washing round the wheels
+  private crunchFilter!: BiquadFilterNode;
+  private crunchGain!: GainNode;
+  private swishFilter!: BiquadFilterNode;
+  private swishGain!: GainNode;
+  private wadeFilter!: BiquadFilterNode;
+  private wadeGain!: GainNode;
+  /** The wash's slosh: a quick random wander around 0 (about ±1). */
+  private slosh = 0;
   // Wind: the rush on the left and right, and the buffeting
   private wind!: Array<{ band: BiquadFilterNode; gain: GainNode }>;
   private buffetGain!: GainNode;
@@ -492,6 +514,20 @@ export class CarAudio {
     this.roadFilter = filter('lowpass', 200, 0.6);
     this.roadGain = gainNode(0);
     this.noiseSource(ctx).connect(this.roadFilter).connect(this.roadGain).connect(spots.road.panner);
+    // Loose ground: a band of noise chopped by a fast random flutter (noise
+    // under 70 Hz, driving its gain), so it sounds like grit, not hiss.
+    this.crunchFilter = filter('bandpass', 1600, 0.8);
+    const grit = gainNode(0.5);
+    this.noiseSource(ctx).connect(filter('lowpass', 70, 0.7)).connect(gainNode(10)).connect(grit.gain);
+    this.crunchGain = gainNode(0);
+    this.noiseSource(ctx).connect(this.crunchFilter).connect(grit).connect(this.crunchGain).connect(spots.road.panner);
+    // Grass: a soft, low swish. Water: a wash around the band of the wheels' wake.
+    this.swishFilter = filter('lowpass', 600, 0.9);
+    this.swishGain = gainNode(0);
+    this.noiseSource(ctx).connect(this.swishFilter).connect(this.swishGain).connect(spots.road.panner);
+    this.wadeFilter = filter('bandpass', 500, 0.7);
+    this.wadeGain = gainNode(0);
+    this.noiseSource(ctx).connect(this.wadeFilter).connect(this.wadeGain).connect(spots.road.panner);
     // Wind is all around, not on the car: a rush each side, from its own noise
     // so the two gust apart and sound wide, and a low buffeting in the middle.
     this.wind = [-0.6, 0.6].map((pan) => {
@@ -728,7 +764,19 @@ export class CarAudio {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
-    const gains = [this.whineGain, this.diffGain, this.rear.gain, this.front.gain, this.spinGain, this.roadGain, this.buffetGain, ...this.wind.map((w) => w.gain)];
+    const gains = [
+      this.whineGain,
+      this.diffGain,
+      this.rear.gain,
+      this.front.gain,
+      this.spinGain,
+      this.roadGain,
+      this.crunchGain,
+      this.swishGain,
+      this.wadeGain,
+      this.buffetGain,
+      ...this.wind.map((w) => w.gain),
+    ];
     const rig = this.rig;
     if (rig) gains.push(rig.exhaustGain, rig.intakeGain, ...(rig.whistle ? [rig.whistle.gain] : []));
     for (const g of gains) g.gain.setTargetAtTime(0, t, 0.05);
@@ -778,14 +826,16 @@ export class CarAudio {
     // The fallback's tones sit at the firing rate and half it.
     const fire = (s.rpm / 60) * (S.banks.length / 2);
     for (const [i, osc] of rig.fallback.entries()) set(osc.frequency, fire / (i + 1), 0.03);
+    // Sinking, the engine drowns: everything mechanical fades out under the water.
+    const dry = (1 - s.submerged) ** 2;
     // Pulses carry more energy the faster they come: level it off a little with rpm.
-    const level = (0.5 + 0.5 * load) * Math.pow(Math.max(frac, 0.1), -0.3) * S.level;
+    const level = (0.5 + 0.5 * load) * Math.pow(Math.max(frac, 0.1), -0.3) * S.level * dry;
     set(rig.exhaustGain.gain, cut && !rig.node ? level * 0.3 : level, cut ? 0.01 : 0.05);
     // Muffled off-throttle and low down; it opens up with load and revs, but a
     // car exhaust stays dark (a bike's is open and bright).
     for (const low of rig.exhaustLow) set(low.frequency, S.muffle.base + S.muffle.load * load * (0.35 + 0.65 * frac) + S.muffle.rev * frac, 0.05);
     set(rig.intakeFilter.frequency, S.intake.base + S.intake.rev * frac, 0.05);
-    set(rig.intakeGain.gain, S.intake.gain * load * Math.pow(Math.max(frac, 0), S.intake.power), 0.06);
+    set(rig.intakeGain.gain, S.intake.gain * load * Math.pow(Math.max(frac, 0), S.intake.power) * dry, 0.06);
 
     // Turbo: the whistle climbs with shaft speed (boost and airflow); a lift
     // with boost built vents it through the blow-off valve.
@@ -807,23 +857,35 @@ export class CarAudio {
     const teeth = S.gearTeeth[s.gear] ?? 20;
     set(this.whine.frequency, Math.min(12000, (s.rpm / 60) * teeth), 0.02);
     const strain = 0.25 + 0.75 * Math.max(load, overrun * 0.6);
-    const whine = s.engaged && !s.airborne ? (s.gear < 0 ? 0.05 : 0.009) * strain * smoothstep(1, 8, s.speed) : 0;
+    const whine = s.engaged && !s.airborne ? (s.gear < 0 ? 0.05 : 0.009) * strain * smoothstep(1, 8, s.speed) * dry : 0;
     set(this.whineGain.gain, whine, 0.05);
     const shaftHz = (s.speed / (2 * Math.PI * D.wheelRadius)) * D.finalDrive;
     set(this.diff.frequency, Math.max(1, shaftHz * S.pinionTeeth), 0.03);
-    set(this.diffGain.gain, s.engaged && !s.airborne ? S.diffGain * smoothstep(5, 30, s.speed) : 0, 0.08);
+    set(this.diffGain.gain, s.engaged && !s.airborne ? S.diffGain * smoothstep(5, 30, s.speed) * dry : 0, 0.08);
 
     // Tires sing with the speed they slide at (a standing burnout too), and
     // the pitch rises with it, wandering a little as the rubber stick-slips.
+    // Only on hard ground: off it they crunch, swish or wash (below) instead.
     const ground = s.airborne ? 0 : 1;
+    const hard = (s.hardF + s.hardR) / 2;
     this.wander += dt;
     const wobble = 1 + 0.035 * Math.sin(this.wander * 11) + 0.02 * Math.sin(this.wander * 27.3);
-    this.voice(this.rear, smoothstep(0.4, 5, s.slideR) * ground * 0.7, (880 + 22 * Math.min(s.slideR, 12)) * wobble, t);
-    this.voice(this.front, smoothstep(0.4, 5, s.slideF) * ground * 0.45, (680 + 18 * Math.min(s.slideF, 12)) * wobble, t);
+    this.voice(this.rear, smoothstep(0.4, 5, s.slideR) * ground * 0.7 * s.hardR, (880 + 22 * Math.min(s.slideR, 12)) * wobble, t);
+    this.voice(this.front, smoothstep(0.4, 5, s.slideF) * ground * 0.45 * s.hardF, (680 + 18 * Math.min(s.slideF, 12)) * wobble, t);
     set(this.spinFilter.frequency, 500 + 40 * Math.min(s.wheelSpin, 20), 0.05);
-    set(this.spinGain.gain, smoothstep(1, 8, s.wheelSpin) * ground * 0.12, 0.05);
-    set(this.roadFilter.frequency, 140 + s.speed * 14, 0.1);
-    set(this.roadGain.gain, Math.min(0.12, 0.005 + s.speed * 0.0022) * ground * smoothstep(0.5, 3, s.speed), 0.1);
+    set(this.spinGain.gain, smoothstep(1, 8, s.wheelSpin) * ground * 0.12 * (0.3 + 0.7 * hard), 0.05);
+    // Rolling noise: soft ground muffles it; cobbles turn it into a low drum.
+    set(this.roadFilter.frequency, (140 + s.speed * 14) * (1 - 0.4 * s.rough), 0.1);
+    set(this.roadGain.gain, Math.min(0.12, 0.005 + s.speed * 0.0022) * ground * smoothstep(0.5, 3, s.speed) * (0.35 + 0.65 * hard) * (1 + 1.5 * s.rough), 0.1);
+    const slide = Math.max(s.slideF, s.slideR);
+    set(this.crunchFilter.frequency, 1200 + 30 * Math.min(s.speed, 40), 0.1);
+    set(this.crunchGain.gain, s.loose * ground * (0.06 * smoothstep(1, 25, s.speed) + 0.2 * smoothstep(0.5, 6, slide)), 0.06);
+    set(this.swishFilter.frequency, 400 + 15 * Math.min(s.speed, 40), 0.1);
+    set(this.swishGain.gain, s.turf * ground * (0.05 * smoothstep(1, 20, s.speed) + 0.12 * smoothstep(0.5, 6, slide)), 0.08);
+    const sa = Math.exp(-dt / 0.15);
+    this.slosh = this.slosh * sa + (Math.random() * 2 - 1) * Math.sqrt(1 - sa * sa) * Math.sqrt(3);
+    set(this.wadeFilter.frequency, (450 + 25 * Math.min(s.speed, 30)) * (1 + 0.15 * this.slosh), 0.05);
+    set(this.wadeGain.gain, s.wet * ground * 0.22 * smoothstep(0.3, 8, s.speed) * Math.max(0.3, 1 + 0.4 * this.slosh), 0.05);
     this.updateWind(s, dt, t);
 
     // Everything where it is on the car, turned as the car is to the view. The
@@ -948,6 +1010,36 @@ export class CarAudio {
     src.connect(filter).connect(g).connect(this.master);
     src.start(t, Math.random());
     src.stop(t + 0.4);
+  }
+
+  /** The car going into deep water (0–1): a heavy splash that falls in pitch, over a low whump. */
+  splash(strength: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const band = ctx.createBiquadFilter();
+    band.type = 'bandpass';
+    band.Q.value = 0.7;
+    band.frequency.setValueAtTime(2200, t);
+    band.frequency.exponentialRampToValueAtTime(450, t + 0.8);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.8 * strength, t + 0.015);
+    g.gain.setTargetAtTime(0, t + 0.08, 0.28);
+    src.connect(band).connect(g).connect(this.master);
+    src.start(t, Math.random());
+    src.stop(t + 1.4);
+    const osc = ctx.createOscillator();
+    osc.frequency.setValueAtTime(80, t);
+    osc.frequency.exponentialRampToValueAtTime(32, t + 0.3);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.6 * strength, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    osc.connect(og).connect(this.master);
+    osc.start(t);
+    osc.stop(t + 0.4);
   }
 
   /** Landing: the suspension bottoming out, a low thud. */
